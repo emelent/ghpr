@@ -52,6 +52,9 @@ ghpr            # pick from open PRs
 ghpr 42         # open PR #42
 ```
 
+In the picker, `j`/`k` move, `/` filters, and `enter`, `l` or `→` opens the
+selected pull request. `q` quits.
+
 Or point at any repository:
 
 ```sh

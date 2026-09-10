@@ -480,7 +480,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			switch key {
 			case "q":
 				return m, tea.Quit
-			case "enter":
+			case "enter", "l", "right":
 				if it, ok := m.list.SelectedItem().(prItem); ok {
 					m.number = it.s.Number
 					m.screen = screenDiff

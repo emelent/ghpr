@@ -687,3 +687,17 @@ func TestJumpChangeKeys(t *testing.T) {
 		t.Fatalf("K should return to row 3, got %d", m.cursor)
 	}
 }
+
+func TestPickerOpensWithL(t *testing.T) {
+	m := New(&gh.Client{Repo: "o/r"}, 0, "")
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.Update(prListMsg{prs: []gh.PRSummary{{Number: 12, Title: "one"}, {Number: 34, Title: "two"}}})
+	if m.screen != screenPicker {
+		t.Fatal("expected picker")
+	}
+	m.handleKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	_, cmd := m.handleKey(tea.KeyPressMsg{Code: 'l', Text: "l"})
+	if m.screen != screenDiff || m.number != 34 || cmd == nil {
+		t.Fatalf("l should open PR #34 and start loading: screen=%v number=%d", m.screen, m.number)
+	}
+}
