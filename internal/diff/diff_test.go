@@ -173,3 +173,21 @@ func TestInDiff(t *testing.T) {
 		}
 	}
 }
+
+func TestFingerprint(t *testing.T) {
+	a := Parse(sample)
+	b := Parse(sample)
+	if a[0].Fingerprint() != b[0].Fingerprint() {
+		t.Fatal("same diff must hash the same")
+	}
+	if a[0].Fingerprint() == a[1].Fingerprint() {
+		t.Fatal("different files must differ")
+	}
+	c := Parse(strings.Replace(sample, "fmt.Println(\"hi\")", "fmt.Println(\"bye\")", 1))
+	if c[0].Fingerprint() == a[0].Fingerprint() {
+		t.Fatal("changed content must change the fingerprint")
+	}
+	if len(a[0].Fingerprint()) != 32 {
+		t.Fatalf("fingerprint length %d", len(a[0].Fingerprint()))
+	}
+}

@@ -3,6 +3,9 @@
 package diff
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -291,4 +294,21 @@ func (f *File) InDiff(side string, n int) bool {
 		}
 	}
 	return false
+}
+
+// Fingerprint returns a stable hash of a file's diff: its paths, status and
+// every hunk header and line. Two diffs of the same file with identical
+// changes produce the same fingerprint; any edit to the file within the PR
+// changes it. Call it before the text is post-processed for display.
+func (f *File) Fingerprint() string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%v\n", f.OldPath, f.NewPath, f.Status, f.IsBinary)
+	for i := range f.Hunks {
+		hk := &f.Hunks[i]
+		fmt.Fprintf(h, "@@ %d,%d %d,%d\n", hk.OldStart, hk.OldCount, hk.NewStart, hk.NewCount)
+		for _, l := range hk.Lines {
+			fmt.Fprintf(h, "%d%s\n", l.Kind, l.Text)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))[:32]
 }

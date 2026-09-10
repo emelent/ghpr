@@ -10,6 +10,7 @@ reuses your existing `gh` login and works with any host `gh` is configured for.
 
 - Syntax-highlighted diffs (via chroma), inline or side-by-side with a single-key toggle
 - Full-file view that shows the whole file with the changes in place, and next/previous change navigation
+- Mark files as viewed. Marks persist locally with a timestamp and are dropped automatically when a file changes after you viewed it
 - File list with per-file change counts and open/resolved thread badges
 - Review threads rendered inline under the lines they belong to
 - Create single-line and multi-line comments, reply to threads, resolve/unresolve threads
@@ -96,6 +97,7 @@ Press `?` inside the app for this list.
 | `tab` | Switch focus between file list and diff |
 | `f` | Show / hide the file list |
 | `s` | Toggle inline / side-by-side diff |
+| `m` | Mark / unmark the current file as viewed and move to the next file. Viewed files show a ✓ in the file list and the header shows when you viewed them |
 | `F` | Toggle full-file view. Fetches the file at the PR head and shows every line with the hunks in place. Comments are still limited to lines that are part of the diff, as GitHub requires |
 
 ### Reviewing
@@ -132,6 +134,16 @@ through. Where Command is not reported, use `ctrl+enter`.
 | --- | --- |
 | `?` | Toggle help |
 | `q`, `ctrl+c` | Quit |
+
+## Viewed files
+
+Pressing `m` stores the file path, the time, the PR head commit and a
+fingerprint of the file's diff in `viewed.json` under `$GHPR_STATE_DIR`, or the
+user config directory (`~/Library/Application Support/ghpr` on macOS,
+`~/.config/ghpr` on Linux) when the variable is unset. Each time the PR is
+loaded or refreshed, files whose diff no longer matches the stored fingerprint,
+meaning they changed after you viewed them, are unmarked and the status bar
+says how many were reset. Marks are per pull request.
 
 ## How it talks to GitHub
 

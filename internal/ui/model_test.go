@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 	"ghpr/internal/diff"
 	"ghpr/internal/gh"
+	"ghpr/internal/state"
 )
 
 const sample = `diff --git a/main.go b/main.go
@@ -451,3 +453,72 @@ func TestFullFileView(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+func TestViewedMarks(t *testing.T) {
+	m := newTestModel(t)
+	st, err := state.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetStore(st)
+	// Re-deliver the diff so fingerprints are computed with the store attached.
+	m.pending = 1
+	m.Update(diffMsg{files: diff.Parse(sample)})
+	if m.viewedCount() != 0 {
+		t.Fatal("nothing viewed yet")
+	}
+	m.handleKey(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if !m.isViewed("main.go") || m.fileIdx != 1 {
+		t.Fatalf("m should mark main.go and advance; viewed=%v idx=%d", m.isViewed("main.go"), m.fileIdx)
+	}
+	v, _ := m.viewedInfo("main.go")
+	if v.Fingerprint == "" || v.HeadSHA != "abc" || time.Since(v.ViewedAt) > time.Minute {
+		t.Fatalf("viewed record incomplete: %+v", v)
+	}
+	plain := ansi.Strip(m.View().Content)
+	if !strings.Contains(plain, "1 viewed") {
+		t.Fatalf("file panel should show viewed count:\n%s", plain)
+	}
+	m.selectFile(0)
+	if !strings.Contains(ansi.Strip(m.View().Content), "viewed just now") {
+		t.Fatalf("header should show when the file was viewed")
+	}
+	// Persisted on disk.
+	st2, _ := state.Open(filepath.Dir(st.Path()))
+	if _, ok := st2.Get(state.PRKey("o/r", 7), "main.go"); !ok {
+		t.Fatal("mark should be saved to disk")
+	}
+	// Toggle off.
+	m.handleKey(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if m.isViewed("main.go") || m.fileIdx != 0 {
+		t.Fatal("second m should unmark without advancing")
+	}
+	// Mark again, then reload a diff where main.go changed: it is unmarked, b.py stays.
+	m.handleKey(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	m.handleKey(tea.KeyPressMsg{Code: 'm', Text: "m"}) // marks b.py too (last file, no advance)
+	if m.viewedCount() != 2 {
+		t.Fatalf("expected 2 viewed, got %d", m.viewedCount())
+	}
+	changed := strings.Replace(sample, "fmt.Println(\"hi\")", "fmt.Println(\"changed\")", 1)
+	m.pending = 1
+	m.Update(diffMsg{files: diff.Parse(changed)})
+	if m.isViewed("main.go") || !m.isViewed("b.py") {
+		t.Fatalf("main.go should be auto-unmarked, b.py kept: main=%v b=%v", m.isViewed("main.go"), m.isViewed("b.py"))
+	}
+	if !strings.Contains(m.status, "1 file(s) changed since you viewed them") {
+		t.Fatalf("status should report the reset: %q", m.status)
+	}
+	// A file that disappears from the PR is dropped as well.
+	onlyMain := sample[:strings.Index(sample, "diff --git a/b.py")]
+	m.pending = 1
+	m.Update(diffMsg{files: diff.Parse(onlyMain)})
+	if len(st.Paths(state.PRKey("o/r", 7))) != 0 {
+		t.Fatal("b.py left the PR and should be dropped")
+	}
+	// Without a store the key is a no-op with a message.
+	m.SetStore(nil)
+	m.handleKey(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if !m.statusErr {
+		t.Fatal("expected disabled message")
+	}
+}

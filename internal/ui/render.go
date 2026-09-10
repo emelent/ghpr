@@ -237,6 +237,9 @@ func (m *Model) threadCount(path string) (open, total int) {
 func (m *Model) renderFiles(width, height int) []string {
 	lines := make([]string, 0, height)
 	title := styTitle.Render(fmt.Sprintf(" Files (%d)", len(m.files)))
+	if m.store != nil && len(m.files) > 0 {
+		title += styDim.Render(fmt.Sprintf(" · %d viewed", m.viewedCount()))
+	}
 	lines = append(lines, padRight(truncate(title, width), width))
 	lines = append(lines, styBorder.Render(strings.Repeat("─", width)))
 	avail := height - 2
@@ -268,8 +271,17 @@ func (m *Model) renderFiles(width, height int) []string {
 			pathW = 4
 			tail = ""
 		}
+		viewed := m.isViewed(f.Path())
+		mark := " "
+		if viewed {
+			mark = styOK.Render("✓")
+		}
+		pathW--
 		name := leftEllipsis(f.Path(), pathW)
-		line := " " + statusLetter(f.Status) + " " + padRight(name, pathW) + tail
+		if viewed {
+			name = styDim.Render(name)
+		}
+		line := mark + statusLetter(f.Status) + " " + padRight(name, pathW) + tail
 		line = padRight(line, width)
 		if i == m.fileIdx {
 			if m.filesFocused {
@@ -296,6 +308,9 @@ func (m *Model) renderDiff(width, height int) []string {
 		mode := "inline"
 		if m.split {
 			mode = "side-by-side"
+		}
+		if v, ok := m.viewedInfo(f.Path()); ok {
+			mode += " · viewed " + ago(v.ViewedAt)
 		}
 		switch {
 		case m.showingFull():
@@ -423,7 +438,7 @@ func (m *Model) renderStatus(width int) string {
 	if m.overlay == overlayInput {
 		right = styBarKey.Render("⌘+enter") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
 	} else {
-		hints := []struct{ k, v string }{{"j/k", "move"}, {"}/{", "change"}, {"s", "split"}, {"F", "full"}, {"V", "select"}, {"c", "comment"}, {"r", "reply"}, {"x", "resolve"}, {"v", "review"}, {"?", "help"}}
+		hints := []struct{ k, v string }{{"j/k", "move"}, {"}/{", "change"}, {"m", "viewed"}, {"s", "split"}, {"F", "full"}, {"V", "select"}, {"c", "comment"}, {"r", "reply"}, {"x", "resolve"}, {"v", "review"}, {"?", "help"}}
 		var sb strings.Builder
 		for _, h := range hints {
 			sb.WriteString(styBarKey.Render(h.k) + styBarDim.Render(" "+h.v+"  "))
@@ -468,6 +483,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"f", "toggle file list"},
 		{"s", "toggle inline / side-by-side"},
 		{"F", "toggle full file view (whole file with changes in place)"},
+		{"m", "mark / unmark the file as viewed (auto-unmarked if it changes later)"},
 		{"c", "comment on the current line (or selection)"},
 		{"V", "start / stop selecting lines for a multi-line comment"},
 		{"r", "reply to the thread under the cursor"},

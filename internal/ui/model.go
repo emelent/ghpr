@@ -15,6 +15,7 @@ import (
 
 	"ghpr/internal/diff"
 	"ghpr/internal/gh"
+	"ghpr/internal/state"
 )
 
 type screen int
@@ -66,6 +67,10 @@ type Model struct {
 	files   []diff.File
 	threads []gh.Thread
 	pending int // outstanding loads
+
+	// viewed-file tracking (persisted via store; nil store disables it)
+	store        *state.Store
+	fingerprints []string // per file, computed at parse time
 
 	// diff view state
 	fileIdx      int
@@ -373,6 +378,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		m.files = msg.files
+		m.fingerprints = make([]string, len(m.files))
+		for i := range m.files {
+			m.fingerprints[i] = m.files[i].Fingerprint()
+		}
+		dropped := m.reconcileViewed()
 		m.spanCache = map[int]map[*diff.Line][]Span{}
 		m.fullFiles = map[int]*diff.File{}
 		m.fullSpans = map[int]map[*diff.Line][]Span{}
@@ -381,7 +391,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fileIdx = 0
 		m.cursor, m.scroll = 0, 0
 		m.rebuildRows()
-		return m, m.ensureFull()
+		cmds := []tea.Cmd{m.ensureFull()}
+		if dropped > 0 {
+			cmds = append(cmds, m.setStatus(fmt.Sprintf("%d file(s) changed since you viewed them – unmarked", dropped), false))
+		}
+		return m, tea.Batch(cmds...)
 
 	case fileContentMsg:
 		delete(m.fullPending, msg.idx)
@@ -543,6 +557,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.clearSelection()
 		m.rebuildRowsKeepLine()
 		return m, m.ensureFull()
+	case "m":
+		return m, m.toggleViewed()
 	case "}":
 		m.jumpChange(1)
 	case "{":
@@ -1132,3 +1148,94 @@ func (m *Model) view() string {
 
 // SetSplit sets the initial diff layout.
 func (m *Model) SetSplit(v bool) { m.split = v }
+
+// SetStore enables persisted "viewed" marks for files.
+func (m *Model) SetStore(s *state.Store) { m.store = s }
+
+// ---------- viewed files ----------
+
+func (m *Model) prKey() string { return state.PRKey(m.client.Repo, m.number) }
+
+// viewedInfo returns the viewed record for a file, if marked.
+func (m *Model) viewedInfo(path string) (state.Viewed, bool) {
+	if m.store == nil {
+		return state.Viewed{}, false
+	}
+	return m.store.Get(m.prKey(), path)
+}
+
+func (m *Model) isViewed(path string) bool {
+	_, ok := m.viewedInfo(path)
+	return ok
+}
+
+// viewedCount returns how many of the PR's files are marked viewed.
+func (m *Model) viewedCount() int {
+	n := 0
+	for i := range m.files {
+		if m.isViewed(m.files[i].Path()) {
+			n++
+		}
+	}
+	return n
+}
+
+// reconcileViewed drops viewed marks for files whose diff changed since they
+// were viewed and returns how many were dropped. Files that left the PR
+// entirely are dropped too.
+func (m *Model) reconcileViewed() int {
+	if m.store == nil {
+		return 0
+	}
+	key := m.prKey()
+	current := map[string]string{}
+	for i := range m.files {
+		current[m.files[i].Path()] = m.fingerprints[i]
+	}
+	dropped := 0
+	for _, path := range m.store.Paths(key) {
+		v, _ := m.store.Get(key, path)
+		fp, present := current[path]
+		if !present || fp != v.Fingerprint {
+			m.store.Delete(key, path)
+			dropped++
+		}
+	}
+	if dropped > 0 {
+		_ = m.store.Save()
+	}
+	return dropped
+}
+
+// toggleViewed marks or unmarks the current file and advances to the next
+// file after marking.
+func (m *Model) toggleViewed() tea.Cmd {
+	if len(m.files) == 0 {
+		return nil
+	}
+	if m.store == nil {
+		return m.setStatus("Viewed marks are disabled (state store unavailable)", true)
+	}
+	f := &m.files[m.fileIdx]
+	key, path := m.prKey(), f.Path()
+	if m.isViewed(path) {
+		m.store.Delete(key, path)
+		if err := m.store.Save(); err != nil {
+			return m.setStatus("Save viewed state: "+err.Error(), true)
+		}
+		return m.setStatus("Unmarked "+path, false)
+	}
+	sha := ""
+	if m.pr != nil {
+		sha = m.pr.HeadRefOid
+	}
+	m.store.Set(key, path, state.Viewed{ViewedAt: time.Now(), HeadSHA: sha, Fingerprint: m.fingerprints[m.fileIdx]})
+	if err := m.store.Save(); err != nil {
+		return m.setStatus("Save viewed state: "+err.Error(), true)
+	}
+	cmds := []tea.Cmd{m.setStatus(fmt.Sprintf("Viewed %s (%d/%d)", path, m.viewedCount(), len(m.files)), false)}
+	if m.fileIdx+1 < len(m.files) {
+		cmds = append(cmds, m.selectFile(m.fileIdx+1))
+	}
+	return tea.Batch(cmds...)
+}

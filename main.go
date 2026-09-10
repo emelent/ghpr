@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"ghpr/internal/gh"
+	"ghpr/internal/state"
 	"ghpr/internal/ui"
 )
 
@@ -24,6 +25,7 @@ Usage:
   ghpr [flags] [<number> | <url> | owner/repo#<number>]
 
 Without a PR reference an interactive picker lists open pull requests.
+Viewed-file marks are stored in $GHPR_STATE_DIR or the user config dir (ghpr/viewed.json).
 
 Flags:
   -R, --repo owner/name   repository (default: repository of the current directory)
@@ -98,6 +100,13 @@ func main() {
 
 	model := ui.New(&gh.Client{Repo: repo}, number, syntax)
 	model.SetSplit(split)
+	if dir, err := state.Dir(); err == nil {
+		if st, err := state.Open(dir); err == nil {
+			model.SetStore(st)
+		} else {
+			fmt.Fprintln(os.Stderr, "warning: viewed-file state disabled:", err)
+		}
+	}
 	p := tea.NewProgram(model)
 	final, err := p.Run()
 	if err != nil {
