@@ -14,6 +14,9 @@ import (
 	"ghpr/internal/ui"
 )
 
+// version is injected at build time via -ldflags "-X main.version=v1.2.3".
+var version = "dev"
+
 func usage() {
 	fmt.Fprintf(os.Stderr, `ghpr – review GitHub pull requests in the terminal
 
@@ -27,6 +30,7 @@ Flags:
   -t, --theme name        UI theme: %s (default: %s, env GHPR_THEME)
   --syntax name           chroma style for syntax highlighting (default: the theme's own, env GHPR_SYNTAX)
   -s, --split             start in side-by-side mode
+  -V, --version           print the version and exit
   -h, --help              show this help
 
 Keys inside the app: press ? for the full list.
@@ -35,7 +39,7 @@ Keys inside the app: press ? for the full list.
 
 func main() {
 	var repo, theme, syntax string
-	var split, help bool
+	var split, help, showVersion bool
 	flag.StringVar(&repo, "R", "", "")
 	flag.StringVar(&repo, "repo", "", "")
 	flag.StringVar(&theme, "t", os.Getenv("GHPR_THEME"), "")
@@ -43,12 +47,18 @@ func main() {
 	flag.StringVar(&syntax, "syntax", os.Getenv("GHPR_SYNTAX"), "")
 	flag.BoolVar(&split, "s", false, "")
 	flag.BoolVar(&split, "split", false, "")
+	flag.BoolVar(&showVersion, "V", false, "")
+	flag.BoolVar(&showVersion, "version", false, "")
 	flag.BoolVar(&help, "h", false, "")
 	flag.BoolVar(&help, "help", false, "")
 	flag.Usage = usage
 	flag.Parse()
 	if help {
 		usage()
+		return
+	}
+	if showVersion {
+		fmt.Println("ghpr " + version)
 		return
 	}
 

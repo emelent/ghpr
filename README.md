@@ -67,6 +67,7 @@ ghpr https://github.com/owner/repo/pull/42
 | `-t, --theme name` | UI theme: `github-dark` (default) or `solarized-dark`. Env: `GHPR_THEME` |
 | `--syntax name` | Chroma style for syntax highlighting. Defaults to the theme's pairing (`catppuccin-mocha` for github-dark, `solarized-dark` for solarized-dark). Env: `GHPR_SYNTAX` |
 | `-s, --split` | Start in side-by-side mode |
+| `-V, --version` | Print the version and exit |
 | `-h, --help` | Show help |
 
 Any chroma style name works for `--syntax`, for example `dracula`, `github-dark`,
@@ -140,6 +141,23 @@ Every operation shells out to `gh`:
 - `gh pr review`, `gh pr comment` for reviews and PR comments
 - `gh api` (REST) for creating line comments and replies
 - `gh api graphql` for fetching review threads and resolving/unresolving them
+
+## Releases
+
+Every push to `main` runs the release workflow (`.github/workflows/release.yml`):
+
+1. Tests run.
+2. The next version is derived from the commit messages since the last `v*` tag
+   using [Conventional Commits](https://www.conventionalcommits.org):
+   `feat!:` or a `BREAKING CHANGE` footer bumps major, `feat:` bumps minor,
+   `fix:`/`perf:`/`refactor:`/`revert:` and non-conventional messages bump patch,
+   and `chore:`/`docs:`/`ci:`/`test:`/`style:`/`build:` alone produce no release.
+3. The commit is tagged, binaries are cross-compiled for Linux, macOS and Windows,
+   and a GitHub release is published with archives, a `SHA256SUMS.txt` and
+   auto-generated notes.
+
+Preview the next tag locally with `.github/scripts/next-version.sh`. Pull
+requests run `gofmt`, `go vet`, tests and a build via `.github/workflows/ci.yml`.
 
 ## Development
 

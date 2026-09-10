@@ -1,10 +1,13 @@
 .PHONY: build run clean install deps fmt lint test build-all
 
-BINARY := ghpr
+BINARY  := ghpr
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -s -w -X main.version=$(VERSION)
+GOBUILD := go build -trimpath -ldflags "$(LDFLAGS)"
 
 # Build the application
 build:
-	go build -o $(BINARY) .
+	$(GOBUILD) -o $(BINARY) .
 
 # Run the application
 run: build
@@ -36,13 +39,12 @@ lint:
 test:
 	go test ./...
 
-# Build for multiple platforms
+# Build for multiple platforms (same set the release workflow publishes)
+PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 build-all:
-	GOOS=linux GOARCH=amd64 go build -o dist/$(BINARY)-linux-amd64 .
-	GOOS=linux GOARCH=386 go build -o dist/$(BINARY)-linux-x86 .
-	GOOS=linux GOARCH=arm GOARM=6 go build -o dist/$(BINARY)-linux-armv6 .
-	GOOS=linux GOARCH=arm GOARM=7 go build -o dist/$(BINARY)-linux-armv7 .
-	GOOS=linux GOARCH=arm64 go build -o dist/$(BINARY)-linux-arm64 .
-	GOOS=darwin GOARCH=amd64 go build -o dist/$(BINARY)-darwin-amd64 .
-	GOOS=darwin GOARCH=arm64 go build -o dist/$(BINARY)-darwin-arm64 .
-	GOOS=windows GOARCH=amd64 go build -o dist/$(BINARY)-windows-amd64.exe .
+	@mkdir -p dist
+	@for p in $(PLATFORMS); do \
+		os=$${p%/*}; arch=$${p#*/}; ext=""; [ "$$os" = windows ] && ext=.exe; \
+		echo "building $$os/$$arch"; \
+		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 $(GOBUILD) -o dist/$(BINARY)-$$os-$$arch$$ext . || exit 1; \
+	done
