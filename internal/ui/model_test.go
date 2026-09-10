@@ -468,9 +468,10 @@ func TestViewedMarks(t *testing.T) {
 		t.Fatal("nothing viewed yet")
 	}
 	m.handleKey(tea.KeyPressMsg{Code: 'm', Text: "m"})
-	if !m.isViewed("main.go") || m.fileIdx != 1 {
-		t.Fatalf("m should mark main.go and advance; viewed=%v idx=%d", m.isViewed("main.go"), m.fileIdx)
+	if !m.isViewed("main.go") || m.fileIdx != 0 || !m.filesFocused {
+		t.Fatalf("m should mark main.go, stay on it and focus the file panel; viewed=%v idx=%d focused=%v", m.isViewed("main.go"), m.fileIdx, m.filesFocused)
 	}
+	m.filesFocused = false
 	v, _ := m.viewedInfo("main.go")
 	if v.Fingerprint == "" || v.HeadSHA != "abc" || time.Since(v.ViewedAt) > time.Minute {
 		t.Fatalf("viewed record incomplete: %+v", v)
@@ -479,7 +480,6 @@ func TestViewedMarks(t *testing.T) {
 	if !strings.Contains(plain, "1 viewed") {
 		t.Fatalf("file panel should show viewed count:\n%s", plain)
 	}
-	m.selectFile(0)
 	if !strings.Contains(ansi.Strip(m.View().Content), "viewed just now") {
 		t.Fatalf("header should show when the file was viewed")
 	}
@@ -488,14 +488,15 @@ func TestViewedMarks(t *testing.T) {
 	if _, ok := st2.Get(state.PRKey("o/r", 7), "main.go"); !ok {
 		t.Fatal("mark should be saved to disk")
 	}
-	// Toggle off.
+	// Toggle off (from the diff; unmarking does not change focus).
 	m.handleKey(tea.KeyPressMsg{Code: 'm', Text: "m"})
-	if m.isViewed("main.go") || m.fileIdx != 0 {
-		t.Fatal("second m should unmark without advancing")
+	if m.isViewed("main.go") || m.fileIdx != 0 || m.filesFocused {
+		t.Fatal("second m should unmark and stay in the diff")
 	}
-	// Mark again, then reload a diff where main.go changed: it is unmarked, b.py stays.
+	// Mark both files, then reload a diff where main.go changed: it is unmarked, b.py stays.
 	m.handleKey(tea.KeyPressMsg{Code: 'm', Text: "m"})
-	m.handleKey(tea.KeyPressMsg{Code: 'm', Text: "m"}) // marks b.py too (last file, no advance)
+	m.selectFile(1)
+	m.handleKey(tea.KeyPressMsg{Code: 'm', Text: "m"})
 	if m.viewedCount() != 2 {
 		t.Fatalf("expected 2 viewed, got %d", m.viewedCount())
 	}
@@ -934,5 +935,325 @@ func TestTopBottomKeys(t *testing.T) {
 	d.handleKey(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl})
 	if d.cursor != 0 {
 		t.Fatal("ctrl+b should move back a full page")
+	}
+}
+
+func TestLOpensFileFromPanel(t *testing.T) {
+	m := newTreeModel(t)
+	m.handleKey(tea.KeyPressMsg{Code: tea.KeyTab})
+	m.treeSel = "internal/ui/render.go"
+	m.handleKey(tea.KeyPressMsg{Code: 'l', Text: "l"})
+	if m.filesFocused || m.files[m.fileIdx].Path() != "internal/ui/render.go" {
+		t.Fatalf("l on a file should open it and focus the diff: focused=%v file=%s", m.filesFocused, m.files[m.fileIdx].Path())
+	}
+	// l on a collapsed directory still expands it and keeps focus.
+	m.handleKey(tea.KeyPressMsg{Code: tea.KeyTab})
+	m.collapsed["internal/ui"] = true
+	m.rebuildTree()
+	m.treeSel = "internal/ui"
+	m.handleKey(tea.KeyPressMsg{Code: 'l', Text: "l"})
+	if m.collapsed["internal/ui"] || !m.filesFocused {
+		t.Fatal("l on a directory should expand it")
+	}
+	// Flat mode.
+	m.handleKey(tea.KeyPressMsg{Code: 't', Text: "t"})
+	m.handleKey(tea.KeyPressMsg{Code: 'l', Text: "l"})
+	if m.filesFocused {
+		t.Fatal("l in flat mode should return focus to the diff")
+	}
+}
+
+func TestHLBetweenTreeAndDiff(t *testing.T) {
+	m := newTreeModel(t)
+	// h in the diff focuses the file tree (and shows it if hidden).
+	m.showFiles = false
+	m.handleKey(tea.KeyPressMsg{Code: 'h', Text: "h"})
+	if !m.filesFocused || !m.showFiles || m.fileIdx != 0 {
+		t.Fatalf("h should focus the tree without changing file: focused=%v show=%v idx=%d", m.filesFocused, m.showFiles, m.fileIdx)
+	}
+	// l on a file in the tree opens it and returns to the diff.
+	m.treeSel = "internal/ui/render.go"
+	m.handleKey(tea.KeyPressMsg{Code: 'l', Text: "l"})
+	if m.filesFocused || m.files[m.fileIdx].Path() != "internal/ui/render.go" {
+		t.Fatalf("l on a file should open it: focused=%v file=%s", m.filesFocused, m.files[m.fileIdx].Path())
+	}
+	// l on a collapsed directory expands it and keeps focus in the tree.
+	m.handleKey(tea.KeyPressMsg{Code: 'h', Text: "h"})
+	m.collapsed["internal/ui"] = true
+	m.rebuildTree()
+	m.treeSel = "internal/ui"
+	m.handleKey(tea.KeyPressMsg{Code: 'l', Text: "l"})
+	if m.collapsed["internal/ui"] || !m.filesFocused {
+		t.Fatal("l on a directory should expand it and stay in the tree")
+	}
+	// [ still moves to the previous file from the diff.
+	m.filesFocused = false
+	m.selectFile(2)
+	m.handleKey(tea.KeyPressMsg{Code: '[', Text: "["})
+	if m.fileIdx != 1 {
+		t.Fatalf("[ should go to the previous file, got %d", m.fileIdx)
+	}
+}
+
+func TestAutoFoldViewedDirs(t *testing.T) {
+	m := newTreeModel(t)
+	st, err := state.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetStore(st)
+	m.pending = 1
+	m.Update(diffMsg{files: diff.Parse(treeSample)})
+	byPath := func(p string) int {
+		for i := range m.files {
+			if m.files[i].Path() == p {
+				return i
+			}
+		}
+		t.Fatalf("no file %s", p)
+		return -1
+	}
+	mark := func() { m.handleKey(tea.KeyPressMsg{Code: 'm', Text: "m"}) }
+
+	// Single-file compacted dir folds immediately and becomes the selection.
+	m.selectFile(byPath("cmd/x/deep/main.go"))
+	mark()
+	if !m.collapsed["cmd/x/deep"] || m.treeSel != "cmd/x/deep" {
+		t.Fatalf("cmd/x/deep should fold: collapsed=%v sel=%q", m.collapsed, m.treeSel)
+	}
+	// Partially viewed dir stays open.
+	m.selectFile(byPath("internal/ui/model.go"))
+	mark()
+	if m.collapsed["internal/ui"] {
+		t.Fatal("internal/ui still has an unviewed file and must stay open")
+	}
+	m.selectFile(byPath("internal/ui/render.go"))
+	mark()
+	if !m.collapsed["internal/ui"] || m.treeSel != "internal/ui" {
+		t.Fatalf("internal/ui should fold once both files are viewed: %v %q", m.collapsed, m.treeSel)
+	}
+	if got := strings.Join(labels(m.treeNodes), "|"); got != "cmd/x/deep/|internal/ui/|README.md" {
+		t.Fatalf("tree after folding: %s", got)
+	}
+	// Unmarking the current file re-expands its folder.
+	mark()
+	if m.collapsed["internal/ui"] || m.isViewed("internal/ui/render.go") {
+		t.Fatal("unmark should expand the folder")
+	}
+	// Flat mode never folds.
+	m.tree = false
+	mark()
+	if m.collapsed["internal/ui"] {
+		t.Fatal("flat mode must not touch collapse state")
+	}
+}
+
+const wideSample = `diff --git a/w.txt b/w.txt
+--- a/w.txt
++++ b/w.txt
+@@ -1,2 +1,2 @@
+ short
+-START_0123456789_0123456789_0123456789_0123456789_0123456789_0123456789_0123456789_0123456789_0123456789_END
++START_0123456789_0123456789_0123456789_0123456789_0123456789_0123456789_0123456789_0123456789_0123456789_NEW
+`
+
+func TestHorizontalScroll(t *testing.T) {
+	m := New(&gh.Client{Repo: "o/r"}, 7, "")
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	m.pr = &gh.PR{Number: 7, HeadRefOid: "abc"}
+	m.pending = 1
+	m.Update(diffMsg{files: diff.Parse(wideSample)})
+	press := func(k string) { m.handleKey(tea.KeyPressMsg{Code: rune(k[0]), Text: k}) }
+	view := func() string { return ansi.Strip(m.View().Content) }
+
+	if m.maxHScroll() == 0 {
+		t.Fatalf("line should overflow: maxLineW=%d content=%d", m.maxLineW, m.contentWidth())
+	}
+	if strings.Contains(view(), "_END") || !strings.Contains(view(), "START_") {
+		t.Fatal("initially the start of the line is visible and the end is cut")
+	}
+	// l pans right until the end is visible, then stops.
+	for i := 0; i < 20 && m.hscroll < m.maxHScroll(); i++ {
+		press("l")
+	}
+	if m.hscroll != m.maxHScroll() || !strings.Contains(view(), "_END") || strings.Contains(view(), "START_") {
+		t.Fatalf("after panning right the end should be visible: hscroll=%d\n%s", m.hscroll, view())
+	}
+	if !strings.Contains(view(), "→ col") {
+		t.Fatal("header should indicate the scroll offset")
+	}
+	press("l")
+	if m.hscroll != m.maxHScroll() || m.filesFocused || m.fileIdx != 0 {
+		t.Fatal("l at the right edge does nothing")
+	}
+	// h pans back; only at the left edge does it go to the file tree.
+	for i := 0; i < 20 && m.hscroll > 0; i++ {
+		press("h")
+		if m.filesFocused {
+			t.Fatal("h must not switch focus while scrolled")
+		}
+	}
+	if m.hscroll != 0 || !strings.Contains(view(), "START_") {
+		t.Fatal("h should return to the left edge")
+	}
+	press("h")
+	if !m.filesFocused {
+		t.Fatal("h at the left edge focuses the file tree")
+	}
+	// Split view pans both halves; switching layout resets the offset.
+	m.filesFocused = false
+	press("l")
+	press("s")
+	if m.hscroll != 0 || !m.split {
+		t.Fatal("toggling split resets scroll")
+	}
+	press("l")
+	if m.hscroll == 0 || strings.Contains(view(), "START_") {
+		t.Fatalf("split view should pan too: hscroll=%d", m.hscroll)
+	}
+	for _, l := range lines(m.View().Content) {
+		if ansi.StringWidth(l) != 80 {
+			t.Fatalf("width drift while scrolled: %q", ansi.Strip(l))
+		}
+	}
+	// A file without overflow (in unified view): l does nothing, h goes straight to the tree.
+	m.split = false
+	m.hscroll = 0
+	m.pending = 1
+	m.Update(diffMsg{files: diff.Parse(sample)})
+	if m.maxHScroll() != 0 {
+		t.Fatalf("sample should fit: maxLineW=%d content=%d", m.maxLineW, m.contentWidth())
+	}
+	press("l")
+	if m.hscroll != 0 {
+		t.Fatal("no overflow, no scroll")
+	}
+	press("h")
+	if !m.filesFocused {
+		t.Fatal("h without overflow focuses the tree")
+	}
+}
+
+func TestResumeLastPosition(t *testing.T) {
+	dir := t.TempDir()
+	st, err := state.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// First session: go to b.py, move the cursor, quit.
+	m := New(&gh.Client{Repo: "o/r"}, 7, "")
+	m.SetStore(st)
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m.pr = &gh.PR{Number: 7, HeadRefOid: "abc"}
+	m.pending = 1
+	m.Update(diffMsg{files: diff.Parse(sample)})
+	if m.fileIdx != 0 {
+		t.Fatal("nothing to resume on first open")
+	}
+	m.selectFile(1)
+	m.cursor = 3 // "+    return 2" -> new line 2 (row 2 is the deletion)
+	m.handleKey(tea.KeyPressMsg{Code: 'Q', Text: "Q"})
+	pos, ok := st.GetLast(state.PRKey("o/r", 7))
+	if !ok || pos.Path != "b.py" || pos.Line != 2 || pos.Side != "RIGHT" {
+		t.Fatalf("position not saved: %+v ok=%v", pos, ok)
+	}
+
+	// Second session with a fresh store instance resumes there.
+	st2, _ := state.Open(dir)
+	m2 := New(&gh.Client{Repo: "o/r"}, 7, "")
+	m2.SetStore(st2)
+	m2.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m2.pr = &gh.PR{Number: 7, HeadRefOid: "abc"}
+	m2.pending = 1
+	m2.Update(diffMsg{files: diff.Parse(sample)})
+	if m2.files[m2.fileIdx].Path() != "b.py" {
+		t.Fatalf("should resume on b.py, got %s", m2.files[m2.fileIdx].Path())
+	}
+	if _, n, _ := m2.rows[m2.cursor].nums(); n != 2 {
+		t.Fatalf("should resume on new line 2, got row %d", m2.cursor)
+	}
+	if !strings.Contains(m2.status, "Resumed at b.py") {
+		t.Fatalf("status %q", m2.status)
+	}
+	// A refresh keeps the current place instead of jumping again.
+	m2.selectFile(0)
+	m2.pending = 1
+	m2.Update(diffMsg{files: diff.Parse(sample)})
+	if m2.fileIdx != 0 {
+		t.Fatal("refresh must not re-apply the remembered position")
+	}
+	// A remembered file that left the PR is ignored.
+	st2.SetLast(state.PRKey("o/r", 7), state.Position{Path: "gone.go", Line: 1})
+	m3 := New(&gh.Client{Repo: "o/r"}, 7, "")
+	m3.SetStore(st2)
+	m3.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m3.pr = &gh.PR{Number: 7}
+	m3.pending = 1
+	m3.Update(diffMsg{files: diff.Parse(sample)})
+	if m3.fileIdx != 0 || m3.status != "" {
+		t.Fatalf("missing file should be ignored quietly: idx=%d status=%q", m3.fileIdx, m3.status)
+	}
+	// Going back to the list also saves.
+	m3.selectFile(1)
+	m3.backToList()
+	if p, _ := st2.GetLast(state.PRKey("o/r", 7)); p.Path != "b.py" {
+		t.Fatalf("backToList should save, got %+v", p)
+	}
+}
+
+func TestFoldViewedDirsOnOpen(t *testing.T) {
+	st, err := state.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := diff.Parse(treeSample)
+	pr := state.PRKey("o/r", 7)
+	fp := func(p string) string {
+		for i := range files {
+			if files[i].Path() == p {
+				return files[i].Fingerprint()
+			}
+		}
+		return ""
+	}
+	// cmd/x/deep fully viewed; internal/ui only half viewed.
+	st.Set(pr, "cmd/x/deep/main.go", state.Viewed{ViewedAt: time.Now(), Fingerprint: fp("cmd/x/deep/main.go")})
+	st.Set(pr, "internal/ui/model.go", state.Viewed{ViewedAt: time.Now(), Fingerprint: fp("internal/ui/model.go")})
+
+	open := func() *Model {
+		m := New(&gh.Client{Repo: "o/r"}, 7, "")
+		m.SetStore(st)
+		m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+		m.pr = &gh.PR{Number: 7}
+		m.pending = 1
+		m.Update(diffMsg{files: diff.Parse(treeSample)})
+		return m
+	}
+	m := open()
+	if !m.collapsed["cmd/x/deep"] || m.collapsed["internal/ui"] {
+		t.Fatalf("only fully viewed folders fold on open: %v", m.collapsed)
+	}
+	if got := strings.Join(labels(m.treeNodes), "|"); got != "cmd/x/deep/|internal/ui/| model.go| render.go|README.md" {
+		t.Fatalf("tree on open: %s", got)
+	}
+	// If the current file sits in a folded folder, the folder is selected.
+	st.SetLast(pr, state.Position{Path: "cmd/x/deep/main.go"})
+	m = open()
+	if m.files[m.fileIdx].Path() != "cmd/x/deep/main.go" || m.collapsed["cmd/x/deep"] {
+		t.Fatalf("resuming inside a folded folder reveals the file: idx=%d collapsed=%v", m.fileIdx, m.collapsed)
+	}
+	// Without a remembered position, file 0 (README.md) is visible and nothing needs fixing.
+	delete(st.Last, pr)
+	st.Set(pr, "README.md", state.Viewed{ViewedAt: time.Now(), Fingerprint: fp("README.md")})
+	m = open()
+	if m.treeSel != "README.md" || !m.collapsed["cmd/x/deep"] {
+		t.Fatalf("sel=%q collapsed=%v", m.treeSel, m.collapsed)
+	}
+	// Refresh does not re-fold folders the user expanded.
+	delete(m.collapsed, "cmd/x/deep")
+	m.pending = 1
+	m.Update(diffMsg{files: diff.Parse(treeSample)})
+	if m.collapsed["cmd/x/deep"] {
+		t.Fatal("refresh must keep the user's expanded folders")
 	}
 }

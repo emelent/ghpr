@@ -81,6 +81,7 @@ type Model struct {
 	// viewed-file tracking (persisted via store; nil store disables it)
 	store        *state.Store
 	fingerprints []string // per file, computed at parse time
+	restoreLast  bool     // jump to the remembered file/line once the diff loads
 
 	// diff view state
 	fileIdx      int
@@ -100,6 +101,8 @@ type Model struct {
 	numW      int
 	cursor    int
 	scroll    int
+	hscroll   int  // horizontal scroll (columns) of the diff content
+	maxLineW  int  // widest line in the current file view
 	selecting bool // visual line selection active
 	selAnchor int  // row index where the selection started
 	spans     map[*diff.Line][]Span
@@ -177,10 +180,62 @@ func New(client *gh.Client, number int, syntax string) *Model {
 	l.SetFilteringEnabled(true)
 	m.list = l
 	m.screen = screenDiff
+	m.restoreLast = true
 	if number == 0 {
 		m.screen = screenPicker
 	}
 	return m
+}
+
+// savePosition remembers the current file and line for this PR.
+func (m *Model) savePosition() {
+	if m.store == nil || len(m.files) == 0 || m.screen != screenDiff {
+		return
+	}
+	pos := state.Position{Path: m.files[m.fileIdx].Path(), UpdatedAt: time.Now()}
+	if r := m.currentRow(); r != nil {
+		if o, n, ok := r.nums(); ok {
+			pos.Line, pos.Side = n, "RIGHT"
+			if n == 0 {
+				pos.Line, pos.Side = o, "LEFT"
+			}
+		}
+	}
+	m.store.SetLast(m.prKey(), pos)
+	_ = m.store.Save()
+}
+
+// restorePosition moves to the file and line remembered for this PR, if it
+// still exists. It returns the command from selecting the file.
+func (m *Model) restorePosition() tea.Cmd {
+	if m.store == nil {
+		return nil
+	}
+	pos, ok := m.store.GetLast(m.prKey())
+	if !ok {
+		return nil
+	}
+	idx := -1
+	for i := range m.files {
+		if m.files[i].Path() == pos.Path {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil
+	}
+	cmd := m.selectFile(idx)
+	if pos.Line > 0 {
+		for i := range m.rows {
+			o, n, ok := m.rows[i].nums()
+			if ok && (pos.Side == "LEFT" && o == pos.Line || pos.Side != "LEFT" && n == pos.Line) {
+				m.cursor = i
+				break
+			}
+		}
+	}
+	return tea.Batch(cmd, m.setStatus("Resumed at "+pos.Path, false))
 }
 
 // ---------- messages ----------
@@ -448,6 +503,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuildRows()
 		m.revealFile(0)
 		cmds := []tea.Cmd{m.ensureFull()}
+		if m.restoreLast {
+			m.restoreLast = false
+			m.foldAllViewedDirs()
+			cmds = append(cmds, m.restorePosition())
+		}
 		if dropped > 0 {
 			cmds = append(cmds, m.setStatus(fmt.Sprintf("%d file(s) changed since you viewed them – unmarked", dropped), false))
 		}
@@ -520,6 +580,7 @@ func (m *Model) Fatal() error { return m.fatal }
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if key == "ctrl+c" {
+		m.savePosition()
 		return m, tea.Quit
 	}
 
@@ -535,6 +596,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					m.number = it.s.Number
 					m.screen = screenDiff
 					m.fromPicker = true
+					m.restoreLast = true
 					return m, m.loadAll()
 				}
 			}
@@ -617,8 +679,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.fromPicker {
 			return m, m.backToList()
 		}
+		m.savePosition()
 		return m, tea.Quit
 	case "Q":
+		m.savePosition()
 		return m, tea.Quit
 	case "b", "backspace":
 		return m, m.backToList()
@@ -660,10 +724,12 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.invalidateLayout()
 	case "s":
 		m.split = !m.split
+		m.hscroll = 0
 		m.clearSelection()
 		m.rebuildRowsKeepLine()
 	case "F":
 		m.full = !m.full
+		m.hscroll = 0
 		m.clearSelection()
 		m.rebuildRowsKeepLine()
 		return m, m.ensureFull()
@@ -700,10 +766,24 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.scroll = 0
 	case "G", "end":
 		m.cursor = max(0, len(m.rows)-1)
-	case "]", "l", "right":
+	case "]":
 		return m, m.selectFile(m.fileIdx + 1)
-	case "[", "h", "left":
+	case "[":
 		return m, m.selectFile(m.fileIdx - 1)
+	case "l", "right":
+		// Pan right while lines overflow the pane.
+		if ms := m.maxHScroll(); m.hscroll < ms {
+			m.hscroll = min(m.hscroll+m.hscrollStep(), ms)
+		}
+	case "h", "left":
+		// Pan back left; at the left edge move into the file tree.
+		if m.hscroll > 0 {
+			m.hscroll = max(0, m.hscroll-m.hscrollStep())
+			return m, nil
+		}
+		m.showFiles = true
+		m.filesFocused = true
+		m.invalidateLayout()
 	case "n":
 		return m, m.jumpThread(1)
 	case "N":
@@ -734,12 +814,27 @@ func (m *Model) selectFile(i int) tea.Cmd {
 		return nil
 	}
 	m.fileIdx = i
-	m.cursor, m.scroll = 0, 0
+	m.cursor, m.scroll, m.hscroll = 0, 0, 0
 	m.clearSelection()
 	m.rebuildRows()
 	m.revealFile(i)
+	m.savePosition()
 	return m.ensureFull()
 }
+
+// contentWidth is the number of columns available for line text.
+func (m *Model) contentWidth() int {
+	w := m.diffWidth()
+	if m.split {
+		return max(1, (w-1)/2-(m.numW+3))
+	}
+	return max(1, w-(m.numW*2+4))
+}
+
+// maxHScroll is how far the content can be panned right.
+func (m *Model) maxHScroll() int { return max(0, m.maxLineW-m.contentWidth()) }
+
+func (m *Model) hscrollStep() int { return max(8, m.contentWidth()/4) }
 
 // ---------- file panel ----------
 
@@ -796,7 +891,7 @@ func (m *Model) handleFilesKey(key string) (bool, tea.Cmd) {
 			return true, m.selectFile(0)
 		case "G", "end":
 			return true, m.selectFile(len(m.files) - 1)
-		case "enter", "space":
+		case "enter", "space", "l", "right":
 			m.filesFocused = false
 			return true, nil
 		}
@@ -836,11 +931,15 @@ func (m *Model) handleFilesKey(key string) (bool, tea.Cmd) {
 		m.filesFocused = false
 		return true, m.selectFile(node.fileIdx)
 	case "l", "right":
-		if node.isDir && m.collapsed[node.path] {
-			delete(m.collapsed, node.path)
-			m.rebuildTree()
+		if node.isDir {
+			if m.collapsed[node.path] {
+				delete(m.collapsed, node.path)
+				m.rebuildTree()
+			}
+			return true, nil
 		}
-		return true, nil
+		m.filesFocused = false
+		return true, m.selectFile(node.fileIdx)
 	case "h", "left":
 		if node.isDir && !m.collapsed[node.path] {
 			m.collapsed[node.path] = true
@@ -1022,7 +1121,7 @@ func (m *Model) jumpThread(dir int) tea.Cmd {
 			continue
 		}
 		m.fileIdx = fi
-		m.scroll = 0
+		m.scroll, m.hscroll = 0, 0
 		m.clearSelection()
 		m.rebuildRows()
 		m.cursor = 0
@@ -1096,10 +1195,15 @@ func (m *Model) rebuildRows() {
 	}
 	m.rows = buildRows(f, m.split, m.threads)
 	maxNum := 1
+	m.maxLineW = 0
 	for _, h := range f.Hunks {
 		maxNum = max(maxNum, h.OldStart+h.OldCount)
 		maxNum = max(maxNum, h.NewStart+h.NewCount)
+		for i := range h.Lines {
+			m.maxLineW = max(m.maxLineW, lipgloss.Width(h.Lines[i].Text))
+		}
 	}
+	m.hscroll = min(m.hscroll, m.maxHScroll())
 	m.numW = max(3, digits(maxNum))
 	if m.cursor >= len(m.rows) {
 		m.cursor = max(0, len(m.rows)-1)
@@ -1286,6 +1390,7 @@ func (m *Model) toggleResolve() tea.Cmd {
 
 // backToList leaves the diff view for the PR picker and refreshes it.
 func (m *Model) backToList() tea.Cmd {
+	m.savePosition()
 	m.screen = screenPicker
 	m.overlay = overlayNone
 	m.pr, m.files, m.threads, m.rows, m.rowStart = nil, nil, nil, nil, nil
@@ -1521,8 +1626,7 @@ func (m *Model) reconcileViewed() int {
 	return dropped
 }
 
-// toggleViewed marks or unmarks the current file and advances to the next
-// file after marking.
+// toggleViewed marks or unmarks the current file as viewed.
 func (m *Model) toggleViewed() tea.Cmd {
 	if len(m.files) == 0 {
 		return nil
@@ -1537,6 +1641,7 @@ func (m *Model) toggleViewed() tea.Cmd {
 		if err := m.store.Save(); err != nil {
 			return m.setStatus("Save viewed state: "+err.Error(), true)
 		}
+		m.revealFile(m.fileIdx) // its folder may have been auto-folded
 		return m.setStatus("Unmarked "+path, false)
 	}
 	sha := ""
@@ -1547,9 +1652,79 @@ func (m *Model) toggleViewed() tea.Cmd {
 	if err := m.store.Save(); err != nil {
 		return m.setStatus("Save viewed state: "+err.Error(), true)
 	}
-	cmds := []tea.Cmd{m.setStatus(fmt.Sprintf("Viewed %s (%d/%d)", path, m.viewedCount(), len(m.files)), false)}
-	if m.fileIdx+1 < len(m.files) {
-		cmds = append(cmds, m.selectFile(m.fileIdx+1))
+	m.foldViewedDirs(path)
+	// Hand focus to the file panel so the next file can be picked right away.
+	m.showFiles = true
+	m.filesFocused = true
+	m.invalidateLayout()
+	return m.setStatus(fmt.Sprintf("Viewed %s (%d/%d)", path, m.viewedCount(), len(m.files)), false)
+}
+
+// foldAllViewedDirs collapses every directory whose files are all viewed.
+// Used when a PR is opened so finished folders start out of the way. If the
+// current file ends up hidden, the tree selection moves to its outermost
+// folded ancestor.
+func (m *Model) foldAllViewedDirs() {
+	if !m.tree || m.store == nil || len(m.files) == 0 {
+		return
 	}
-	return tea.Batch(cmds...)
+	for _, n := range buildTree(m.files, map[string]bool{}, m.isViewed) {
+		if n.isDir && n.files > 0 && n.viewed == n.files {
+			m.collapsed[n.path] = true
+		}
+	}
+	m.rebuildTree()
+	visible := false
+	for i := range m.treeNodes {
+		if m.treeNodes[i].path == m.treeSel {
+			visible = true
+			break
+		}
+	}
+	if visible {
+		return
+	}
+	path := m.files[m.fileIdx].Path()
+	for _, d := range dirsOf(path) {
+		for i := range m.treeNodes {
+			if m.treeNodes[i].isDir && m.treeNodes[i].path == d && m.collapsed[d] {
+				m.treeSel = d
+				return
+			}
+		}
+	}
+}
+
+// foldViewedDirs collapses the directories containing path whose files are
+// all viewed, from the innermost outwards, stopping at the first directory
+// that still has an unviewed file. The tree selection moves to the outermost
+// folded directory so it stays visible.
+func (m *Model) foldViewedDirs(path string) {
+	if !m.tree {
+		return
+	}
+	m.rebuildTree()
+	dirs := dirsOf(path)
+	folded := ""
+	for i := len(dirs) - 1; i >= 0; i-- {
+		var node *treeNode
+		for j := range m.treeNodes {
+			if m.treeNodes[j].isDir && m.treeNodes[j].path == dirs[i] {
+				node = &m.treeNodes[j]
+				break
+			}
+		}
+		if node == nil {
+			continue // compacted into a parent node
+		}
+		if node.viewed < node.files {
+			break
+		}
+		m.collapsed[node.path] = true
+		folded = node.path
+		m.rebuildTree()
+	}
+	if folded != "" {
+		m.treeSel = folded
+	}
 }

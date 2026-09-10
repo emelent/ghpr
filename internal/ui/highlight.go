@@ -8,6 +8,7 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
+	"github.com/charmbracelet/x/ansi"
 
 	"ghpr/internal/diff"
 )
@@ -148,8 +149,9 @@ func (h *Highlighter) HighlightFile(f *diff.File) map[*diff.Line][]Span {
 	return res
 }
 
-// renderSpans renders spans onto a background, truncating/padding to width.
-func renderSpans(spans []Span, bg color.Color, width int) string {
+// renderSpans renders spans onto a background, skipping the first skip
+// columns (horizontal scroll) and truncating/padding to width.
+func renderSpans(spans []Span, bg color.Color, width, skip int) string {
 	if width <= 0 {
 		return ""
 	}
@@ -160,6 +162,15 @@ func renderSpans(spans []Span, bg color.Color, width int) string {
 			break
 		}
 		txt := sp.Text
+		if skip > 0 {
+			w := lipgloss.Width(txt)
+			if w <= skip {
+				skip -= w
+				continue
+			}
+			txt = ansi.TruncateLeft(txt, skip, "")
+			skip = 0
+		}
 		w := lipgloss.Width(txt)
 		if used+w > width {
 			txt = truncate(txt, width-used)

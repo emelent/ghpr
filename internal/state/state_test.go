@@ -22,9 +22,20 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	s.SetLast(pr, Position{Path: "b.go", Line: 12, Side: "RIGHT", UpdatedAt: when})
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+
 	s2, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if p, ok := s2.GetLast(pr); !ok || p.Path != "b.go" || p.Line != 12 || p.Side != "RIGHT" {
+		t.Fatalf("last position lost: %+v ok=%v", p, ok)
+	}
+	if _, ok := s2.GetLast("other#1"); ok {
+		t.Fatal("unknown PR has no position")
 	}
 	v, ok := s2.Get(pr, "a.go")
 	if !ok || !v.ViewedAt.Equal(when) || v.HeadSHA != "abc" || v.Fingerprint != "f1" {

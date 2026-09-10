@@ -75,7 +75,7 @@ func (m *Model) renderUnified(l *diff.Line, st rowState, width, numW int) string
 		numStr(l.OldNum, numW) + " " + numStr(l.NewNum, numW) + " ")
 	sg := lipgloss.NewStyle().Background(bg).Foreground(signFg).Bold(true).Render(sign + " ")
 	gutW := numW*2 + 4
-	content := renderSpans(m.spans[l], bg, width-gutW)
+	content := renderSpans(m.spans[l], bg, width-gutW, m.hscroll)
 	return gut + sg + content
 }
 
@@ -94,7 +94,7 @@ func (m *Model) renderHalf(l *diff.Line, st rowState, width, numW int) string {
 	gut := lipgloss.NewStyle().Background(bg).Foreground(colNumFg).Render(numStr(n, numW) + " ")
 	sg := lipgloss.NewStyle().Background(bg).Foreground(signFg).Bold(true).Render(sign + " ")
 	gutW := numW + 3
-	return gut + sg + renderSpans(m.spans[l], bg, width-gutW)
+	return gut + sg + renderSpans(m.spans[l], bg, width-gutW, m.hscroll)
 }
 
 // renderThread renders a review thread as a bordered block.
@@ -396,6 +396,9 @@ func (m *Model) renderDiff(width, height int) []string {
 		if v, ok := m.viewedInfo(f.Path()); ok {
 			mode += " · viewed " + ago(v.ViewedAt)
 		}
+		if m.hscroll > 0 {
+			mode += fmt.Sprintf(" · → col %d", m.hscroll+1)
+		}
 		switch {
 		case m.showingFull():
 			mode += " · full file"
@@ -613,9 +616,11 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"J / K", "next / previous change in the file"},
 		{"n / N", "next / previous review thread"},
 		{"tab", "focus file list / diff"},
+		{"h / l", "diff: scroll left / right when lines overflow; h at the left edge goes to the file tree"},
+		{"l (file tree)", "open the selected file"},
 		{"f", "toggle file list"},
 		{"t", "file list: tree / flat"},
-		{"enter, h / l, H / L", "file tree: toggle, collapse / expand, collapse / expand all"},
+		{"enter / l, h, H / L", "file tree: open file or expand dir, collapse (or go to parent), collapse / expand all"},
 		{"s", "toggle inline / side-by-side"},
 		{"F", "toggle full file view (whole file with changes in place)"},
 		{"m", "mark / unmark the file as viewed (auto-unmarked if it changes later)"},

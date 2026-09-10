@@ -11,6 +11,7 @@ reuses your existing `gh` login and works with any host `gh` is configured for.
 - Syntax-highlighted diffs (via chroma), inline or side-by-side with a single-key toggle
 - Full-file view that shows the whole file with the changes in place, and next/previous change navigation
 - Mark files as viewed. Marks persist locally with a timestamp and are dropped automatically when a file changes after you viewed it
+- Resumes at the last file and line you were viewing when you reopen a PR
 - File tree (or flat list) with per-file change counts and open/resolved thread badges; directories collapse and single-child paths are compacted
 - Review threads rendered inline under the lines they belong to
 - Create single-line and multi-line comments, reply to threads, resolve/unresolve threads
@@ -100,16 +101,18 @@ Press `?` inside the app for this list.
 | `ctrl+d` / `ctrl+u`, `pgdn` / `pgup`, `space` | Half page down / up |
 | `ctrl+f` / `ctrl+b` | Full page down / up |
 | `g` / `G` | Top / bottom of the file, of the file list when it is focused, or of the PR list |
-| `]` / `[`, `l` / `h` | Next / previous file |
+| `]` / `[` | Next / previous file |
+| `l` | Scroll the diff right when lines are wider than the pane; in the file tree, open the selected file |
+| `h` | Scroll the diff back left; at the left edge, move focus to the file tree |
 | `J` / `K` | Next / previous change in the file |
 | `n` / `N` | Next / previous review thread (crosses files) |
 | `tab` | Switch focus between file list and diff |
 | `f` | Show / hide the file list |
 | `t` | File list as a directory tree (default) or a flat list |
 
-When the file panel is focused in tree mode: `j`/`k` move through directories and files, `enter` or `space` toggles a directory (or opens a file and returns focus to the diff), `h`/`l` collapse / expand (`h` on a file jumps to its directory), `H`/`L` collapse / expand everything. Collapsed directories show file, viewed and change counts.
+When the file panel is focused in tree mode: `j`/`k` move through directories and files, `enter`, `space` or `l` on a file opens it and returns focus to the diff; on a directory `enter`/`space` toggle it, `l` expands and `h` collapses (`h` on a file jumps to its directory), `H`/`L` collapse / expand everything. From the diff, `h` brings you back to the tree. Collapsed directories show file, viewed and change counts.
 | `s` | Toggle inline / side-by-side diff |
-| `m` | Mark / unmark the current file as viewed and move to the next file. Viewed files show a ✓ in the file list and the header shows when you viewed them |
+| `m` | Mark / unmark the current file as viewed. Marking moves focus to the file tree so you can pick the next file. When every file in a folder is viewed the folder folds, and so do its parents up to the first folder with unviewed files. Fully viewed folders start folded when you open the PR. Viewed files show a ✓ in the file list and the header shows when you viewed them |
 | `F` | Toggle full-file view. Fetches the file at the PR head and shows every line with the hunks in place. Comments are still limited to lines that are part of the diff, as GitHub requires |
 
 ### Reviewing
@@ -152,7 +155,12 @@ newline in the text box.
 | `q` | Back to the list when the PR was opened from it, otherwise quit |
 | `Q`, `ctrl+c` | Quit |
 
-## Viewed files
+## Viewed files and resume
+
+The last file and line you were on in each pull request are remembered, and
+reopening the PR takes you straight back there (the status bar says
+`Resumed at <file>`). The position is saved when you change file, go back to
+the list, or quit.
 
 Pressing `m` stores the file path, the time, the PR head commit and a
 fingerprint of the file's diff in `viewed.json` under `$GHPR_STATE_DIR`, or the

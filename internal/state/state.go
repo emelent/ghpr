@@ -22,11 +22,20 @@ type Viewed struct {
 	Fingerprint string `json:"fingerprint"`
 }
 
-// Store is the on-disk state. Keys of Viewed are "owner/repo#123", then the
-// file path within the PR.
+// Position remembers where the user last was in a pull request.
+type Position struct {
+	Path      string    `json:"path"`
+	Line      int       `json:"line,omitempty"` // new-side line (or old-side when 0 on the new side)
+	Side      string    `json:"side,omitempty"` // RIGHT or LEFT
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// Store is the on-disk state. Keys of Viewed and Last are "owner/repo#123";
+// Viewed is further keyed by file path within the PR.
 type Store struct {
 	path   string
 	Viewed map[string]map[string]Viewed `json:"viewed"`
+	Last   map[string]Position          `json:"last,omitempty"`
 }
 
 // Dir returns the directory used for state: $GHPR_STATE_DIR, otherwise
@@ -45,7 +54,7 @@ func Dir() (string, error) {
 // Open loads the store from dir (creating an empty one when the file does
 // not exist yet).
 func Open(dir string) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, "viewed.json"), Viewed: map[string]map[string]Viewed{}}
+	s := &Store{path: filepath.Join(dir, "viewed.json"), Viewed: map[string]map[string]Viewed{}, Last: map[string]Position{}}
 	b, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
@@ -58,6 +67,9 @@ func Open(dir string) (*Store, error) {
 	}
 	if s.Viewed == nil {
 		s.Viewed = map[string]map[string]Viewed{}
+	}
+	if s.Last == nil {
+		s.Last = map[string]Position{}
 	}
 	return s, nil
 }
@@ -90,6 +102,20 @@ func (s *Store) Delete(pr, path string) {
 			delete(s.Viewed, pr)
 		}
 	}
+}
+
+// GetLast returns the last position recorded for a PR.
+func (s *Store) GetLast(pr string) (Position, bool) {
+	p, ok := s.Last[pr]
+	return p, ok
+}
+
+// SetLast records the last position for a PR.
+func (s *Store) SetLast(pr string, p Position) {
+	if s.Last == nil {
+		s.Last = map[string]Position{}
+	}
+	s.Last[pr] = p
 }
 
 // Paths lists the viewed files of a PR, sorted.
