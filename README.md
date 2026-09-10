@@ -14,7 +14,7 @@ reuses your existing `gh` login and works with any host `gh` is configured for.
 - Resumes at the last file and line you were viewing when you reopen a PR
 - File tree (or flat list) with per-file change counts and open/resolved thread badges; directories collapse and single-child paths are compacted
 - Review threads rendered inline under the lines they belong to
-- Create single-line and multi-line comments, reply to threads, resolve/unresolve threads
+- Create single-line and multi-line comments, reply to threads, resolve/unresolve threads, delete your own comments
 - Submit reviews: approve, request changes, or comment
 - Merge the PR (merge commit, squash or rebase, optionally deleting the branch), editing the commit message first; the header shows the merge state
 - Close and reopen PRs
@@ -77,6 +77,7 @@ ghpr https://github.com/owner/repo/pull/42
 | `--syntax name` | Chroma style for syntax highlighting. Defaults to the theme's pairing (`catppuccin-mocha` for github-dark, `solarized-dark` for solarized-dark). Env: `GHPR_SYNTAX` |
 | `-s, --split` | Start in side-by-side mode |
 | `-S, --state name` | Initial picker filter: `open` (default), `closed`, `merged` or `all` |
+| `--debug-keys` | Show the name of every key press in the status bar |
 | `-V, --version` | Print the version and exit |
 | `-h, --help` | Show help |
 
@@ -123,8 +124,9 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 | `V` | Start selecting lines; move with `j`/`k`, then `c` to comment on the range, `esc` to cancel |
 | `r` | Reply to the thread under the cursor |
 | `x` | Resolve / unresolve the thread under the cursor |
+| `d` | Delete one of your comments in the thread under the cursor. The newest is preselected; `j`/`k` pick another, `y` confirms |
 | `v` | Submit a review, then `a` approve, `r` request changes, `c` comment |
-| `M` | Merge the PR. Toggle `d` to delete the branch, then `m` merge commit or `s` squash opens the commit message (subject on the first line, body below) for editing; `⌘+s` merges. `r` rebase asks for `y` to confirm |
+| `M` | Merge the PR. Toggle `d` to delete the branch, then `m` merge commit or `s` squash opens the commit message (subject on the first line, body below) for editing; `ctrl+m` merges. `r` rebase asks for `y` to confirm |
 | `X` | Close the PR without merging (optionally deleting the branch), or reopen a closed PR, after a `y` confirmation |
 | `C` | Post a general comment on the PR |
 | `o` | Open the PR in the browser |
@@ -134,17 +136,25 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 
 | Key | Action |
 | --- | --- |
-| `⌘+s` (also `ctrl+s`) | Submit |
+| `ctrl+m` (also `ctrl+s`) | Submit |
 | `esc` | Cancel |
 
 `enter` inserts a newline. An approval may be submitted with an empty body.
 Every other comment or review needs text.
 
-The Command key only reaches terminal apps when the terminal supports the
-kitty keyboard protocol (Ghostty, kitty, WezTerm, recent iTerm2). Inside tmux,
-add `set -s extended-keys on` to your tmux config so the modifier is passed
-through. Where Command is not reported, use `ctrl+s`. Enter always inserts a
-newline in the text box.
+`ctrl+m` is only reported as its own key when the terminal speaks the kitty
+keyboard protocol (Ghostty, kitty, WezTerm, recent iTerm2); in a plain
+terminal it is the same byte as Enter and just inserts a newline, so use
+`ctrl+s` there. Inside tmux, enable extended keys so the protocol is passed
+through:
+
+```
+set -s extended-keys on
+set -as terminal-features 'xterm*:extkeys'
+```
+
+Run `ghpr --debug-keys ...` to see the name of every key your terminal sends
+in the status bar.
 
 ### General
 

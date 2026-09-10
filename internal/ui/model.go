@@ -32,7 +32,8 @@ const (
 	overlayInput
 	overlayReview
 	overlayMerge
-	overlayState // close / reopen confirmation
+	overlayState  // close / reopen confirmation
+	overlayDelete // delete a review comment
 	overlayHelp
 )
 
@@ -66,11 +67,19 @@ type Model struct {
 	list      list.Model
 	listState string // open, closed, merged or all
 
-	fromPicker bool // the PR was opened from the list; q returns to it
+	fromPicker bool   // the PR was opened from the list; q returns to it
+	debugKeys  bool   // show every key name in the status bar
+	lastKey    string // most recent key name (debugKeys)
 
 	// merge menu
 	mergeMethod gh.MergeMethod // chosen method awaiting confirmation ("" = none)
 	mergeDelete bool           // delete the head branch after merging
+
+	// comment deletion
+	login      string        // authenticated user, "" when unknown
+	delThread  *gh.Thread    // thread the deletion targets
+	delChoices []*gh.Comment // deletable comments in that thread
+	delIdx     int           // index into delChoices
 
 	// data
 	pr      *gh.PR
@@ -262,6 +271,7 @@ type fileContentMsg struct {
 	text string
 	err  error
 }
+type userMsg struct{ login string }
 type actionMsg struct {
 	label   string
 	err     error
@@ -424,10 +434,14 @@ func (m *Model) action(label string, refresh bool, fn func() error) tea.Cmd {
 
 // Init starts loading.
 func (m *Model) Init() tea.Cmd {
-	if m.screen == screenPicker {
-		return tea.Batch(m.setBusy("Loading pull requests…"), m.fetchList())
+	who := func() tea.Msg {
+		login, _ := m.client.CurrentUser()
+		return userMsg{login}
 	}
-	return m.loadAll()
+	if m.screen == screenPicker {
+		return tea.Batch(m.setBusy("Loading pull requests…"), m.fetchList(), who)
+	}
+	return tea.Batch(m.loadAll(), who)
 }
 
 // Update handles messages.
@@ -447,6 +461,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
+
+	case userMsg:
+		m.login = msg.login
+		return m, nil
 
 	case clearStatusMsg:
 		if msg.seq == m.statusSeq {
@@ -552,6 +570,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case tea.KeyPressMsg:
+		if m.debugKeys {
+			m.lastKey = msg.String()
+		}
 		return m.handleKey(msg)
 	}
 
@@ -612,9 +633,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.closeInput()
 			return m, nil
-		case "super+s", "meta+s", "ctrl+s":
-			// cmd+s on macOS (reported as super/meta by terminals that
-			// support the kitty keyboard protocol); ctrl+s elsewhere.
+		case "ctrl+m", "ctrl+s":
+			// ctrl+m is only distinguishable from Enter when the terminal
+			// speaks the kitty keyboard protocol; ctrl+s works everywhere.
 			return m, m.submitInput()
 		}
 		var cmd tea.Cmd
@@ -642,6 +663,28 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case overlayMerge:
 		return m.handleMergeKey(key)
+
+	case overlayDelete:
+		switch key {
+		case "j", "down":
+			if m.delIdx+1 < len(m.delChoices) {
+				m.delIdx++
+			}
+		case "k", "up":
+			if m.delIdx > 0 {
+				m.delIdx--
+			}
+		case "y", "enter":
+			c := m.delChoices[m.delIdx]
+			m.overlay = overlayNone
+			m.delThread, m.delChoices = nil, nil
+			id := c.DatabaseID
+			return m, m.action("Delete comment", true, func() error { return m.client.DeleteReviewComment(id) })
+		case "esc", "n", "q", "d":
+			m.overlay = overlayNone
+			m.delThread, m.delChoices = nil, nil
+		}
+		return m, nil
 
 	case overlayState:
 		switch key {
@@ -794,6 +837,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.startReply()
 	case "x":
 		return m, m.toggleResolve()
+	case "d":
+		return m, m.startDelete()
 	}
 	return m, nil
 }
@@ -1373,6 +1418,40 @@ func (m *Model) startReply() tea.Cmd {
 	return nil
 }
 
+// startDelete opens the delete confirmation for a comment in the thread
+// under the cursor. Only the user's own comments are offered when the login
+// is known; otherwise every comment is, and GitHub decides.
+func (m *Model) startDelete() tea.Cmd {
+	if m.busy != "" {
+		return nil
+	}
+	r := m.currentRow()
+	if r == nil || r.kind != rowThread {
+		return m.setStatus("Move the cursor onto a thread to delete a comment", true)
+	}
+	var choices []*gh.Comment
+	for i := range r.thread.Comments {
+		c := &r.thread.Comments[i]
+		if m.login == "" || c.Author == m.login {
+			choices = append(choices, c)
+		}
+	}
+	if len(choices) == 0 {
+		return m.setStatus("No comment of yours in this thread (@"+m.login+")", true)
+	}
+	m.delThread, m.delChoices, m.delIdx = r.thread, choices, len(choices)-1
+	m.overlay = overlayDelete
+	return nil
+}
+
+// deleteTarget is the comment currently marked for deletion, if any.
+func (m *Model) deleteTarget() *gh.Comment {
+	if m.overlay != overlayDelete || m.delIdx >= len(m.delChoices) {
+		return nil
+	}
+	return m.delChoices[m.delIdx]
+}
+
 func (m *Model) toggleResolve() tea.Cmd {
 	if m.busy != "" {
 		return nil
@@ -1567,6 +1646,10 @@ func (m *Model) view() string {
 
 // SetSplit sets the initial diff layout.
 func (m *Model) SetSplit(v bool) { m.split = v }
+
+// SetDebugKeys shows the name of every key press in the status bar, which
+// helps find out what a terminal actually sends.
+func (m *Model) SetDebugKeys(v bool) { m.debugKeys = v }
 
 // SetStore enables persisted "viewed" marks for files.
 func (m *Model) SetStore(s *state.Store) { m.store = s }

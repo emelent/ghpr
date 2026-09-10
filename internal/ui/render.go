@@ -98,7 +98,7 @@ func (m *Model) renderHalf(l *diff.Line, st rowState, width, numW int) string {
 }
 
 // renderThread renders a review thread as a bordered block.
-func renderThread(t *gh.Thread, selected bool, width int) []string {
+func renderThread(t *gh.Thread, selected bool, width int, target *gh.Comment) []string {
 	bg := color.Color(colThreadBg)
 	if selected {
 		bg = colThreadCu
@@ -145,6 +145,9 @@ func renderThread(t *gh.Thread, selected bool, width int) []string {
 		}
 		author := base.Foreground(colAccent).Bold(true).Render(prefix + "@" + c.Author)
 		when := base.Foreground(colDim).Render("  " + ago(c.CreatedAt))
+		if target != nil && &t.Comments[i] == target {
+			when += base.Foreground(colErr).Bold(true).Render("  ✗ delete?")
+		}
 		emit(author + when)
 		body := strings.TrimSpace(strings.ReplaceAll(c.Body, "\r", ""))
 		if body == "" {
@@ -188,7 +191,7 @@ func (m *Model) renderRow(r *row, st rowState, width, numW int) []string {
 		}
 		return []string{m.renderHalf(r.left, st, lw, numW) + sep + m.renderHalf(r.right, st, rw, numW)}
 	case rowThread:
-		return renderThread(r.thread, selected, width)
+		return renderThread(r.thread, selected, width, m.deleteTarget())
 	}
 	return []string{padRight("", width)}
 }
@@ -202,7 +205,7 @@ func (m *Model) rowHeight(i int) int {
 	if h, ok := m.threadH[i]; ok {
 		return h
 	}
-	h := len(renderThread(r.thread, false, m.diffWidth()))
+	h := len(renderThread(r.thread, false, m.diffWidth(), nil))
 	m.threadH[i] = h
 	return h
 }
@@ -533,6 +536,18 @@ func (m *Model) renderStatus(width int) string {
 				styBarKey.Render("s") + styBar.Render(" squash  ") + styBarKey.Render("r") + styBar.Render(" rebase  ") +
 				styBarKey.Render("d") + styBar.Render(" delete branch: "+del+"  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
 		}
+	case m.overlay == overlayDelete:
+		c := m.deleteTarget()
+		snippet := strings.Join(strings.Fields(c.Body), " ")
+		if len(snippet) > 40 {
+			snippet = snippet[:40] + "…"
+		}
+		pick := ""
+		if len(m.delChoices) > 1 {
+			pick = styBarKey.Render("j/k") + styBar.Render(fmt.Sprintf(" choose (%d/%d)  ", m.delIdx+1, len(m.delChoices)))
+		}
+		left = styBar.Render(fmt.Sprintf(" Delete @%s's comment “%s”? ", c.Author, snippet)) +
+			styBarKey.Render("y") + styBar.Render(" confirm  ") + pick + styBarKey.Render("n") + styBar.Render(" cancel")
 	case m.overlay == overlayState:
 		if m.pr != nil && m.pr.State == "OPEN" {
 			del := "off"
@@ -566,9 +581,9 @@ func (m *Model) renderStatus(width int) string {
 	var right string
 	switch {
 	case m.overlay == overlayInput && m.inKind == inputMerge:
-		right = styBarKey.Render("⌘+s") + styBarDim.Render(" merge  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
+		right = styBarKey.Render("ctrl+m") + styBarDim.Render(" merge  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
 	case m.overlay == overlayInput:
-		right = styBarKey.Render("⌘+s") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
+		right = styBarKey.Render("ctrl+m") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
 	case m.screen == screenPicker:
 		right = styBarKey.Render("enter/l") + styBarDim.Render(" open  ") + styBarKey.Render("s") + styBarDim.Render(" state: "+m.listState+"  ") +
 			styBarKey.Render("/") + styBarDim.Render(" filter  ") + styBarKey.Render("q") + styBarDim.Render(" quit ")
@@ -579,6 +594,9 @@ func (m *Model) renderStatus(width int) string {
 			sb.WriteString(styBarKey.Render(h.k) + styBarDim.Render(" "+h.v+"  "))
 		}
 		right = sb.String()
+	}
+	if m.debugKeys && m.lastKey != "" {
+		right = lipgloss.NewStyle().Background(colBarBg).Foreground(colWarn).Bold(true).Render("key: "+m.lastKey) + styBar.Render("  ") + right
 	}
 	lw := ansi.StringWidth(left)
 	rw := ansi.StringWidth(right)
@@ -628,13 +646,14 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"V", "start / stop selecting lines for a multi-line comment"},
 		{"r", "reply to the thread under the cursor"},
 		{"x", "resolve / unresolve the thread under the cursor"},
+		{"d", "delete one of your comments in the thread under the cursor (y to confirm)"},
 		{"v", "submit a review (approve / request changes / comment)"},
 		{"M", "merge the PR: m / s open the commit message to edit, r rebase, d delete branch"},
 		{"X", "close the PR without merging, or reopen a closed PR"},
 		{"C", "comment on the PR (general)"},
 		{"o", "open the PR in the browser"},
 		{"R", "refresh PR, diff and threads"},
-		{"⌘+s / esc", "submit / cancel text entry (ctrl+s also submits)"},
+		{"ctrl+m / esc", "submit / cancel text entry (ctrl+s also submits)"},
 		{"?", "toggle this help"},
 		{"b / backspace", "back to the pull request list"},
 		{"q", "back to the list when opened from it, otherwise quit"},

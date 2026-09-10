@@ -174,7 +174,7 @@ func TestInputFlow(t *testing.T) {
 		t.Fatalf("title missing")
 	}
 	// Empty submit is rejected.
-	m.handleKey(tea.KeyPressMsg{Code: 's', Mod: tea.ModSuper})
+	m.handleKey(tea.KeyPressMsg{Code: 'm', Mod: tea.ModCtrl})
 	if m.overlay != overlayInput || !m.statusErr {
 		t.Fatalf("empty body should be rejected")
 	}
@@ -713,7 +713,7 @@ func TestMergeMenu(t *testing.T) {
 		case "esc":
 			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
 		case "submit":
-			msg = tea.KeyPressMsg{Code: 's', Mod: tea.ModSuper}
+			msg = tea.KeyPressMsg{Code: 'm', Mod: tea.ModCtrl}
 		default:
 			msg = tea.KeyPressMsg{Code: rune(k[0]), Text: k}
 		}
@@ -1255,5 +1255,80 @@ func TestFoldViewedDirsOnOpen(t *testing.T) {
 	m.Update(diffMsg{files: diff.Parse(treeSample)})
 	if m.collapsed["cmd/x/deep"] {
 		t.Fatal("refresh must keep the user's expanded folders")
+	}
+}
+
+func TestDeleteComment(t *testing.T) {
+	m := newTestModel(t)
+	m.Update(userMsg{login: "bob"})
+	press := func(k string) tea.Cmd {
+		var msg tea.KeyPressMsg
+		if k == "esc" {
+			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
+		} else {
+			msg = tea.KeyPressMsg{Code: rune(k[0]), Text: k}
+		}
+		_, cmd := m.handleKey(msg)
+		return cmd
+	}
+	// Not on a thread.
+	m.cursor = 1
+	press("d")
+	if m.overlay != overlayNone || !m.statusErr {
+		t.Fatal("d off a thread should be refused")
+	}
+	// Thread T2 (row 4) has only carol's comment: nothing of bob's.
+	m.cursor = 4
+	press("d")
+	if m.overlay != overlayNone || !strings.Contains(m.status, "No comment of yours") {
+		t.Fatalf("expected refusal, status=%q", m.status)
+	}
+	// Thread T1 (row 7): alice then bob -> bob's reply is offered.
+	m.cursor = 7
+	press("d")
+	if m.overlay != overlayDelete || len(m.delChoices) != 1 || m.delChoices[0].Author != "bob" {
+		t.Fatalf("delete overlay should target bob's comment: %v", m.delChoices)
+	}
+	plain := ansi.Strip(m.View().Content)
+	if !strings.Contains(plain, "Delete @bob's comment “Style.”?") || !strings.Contains(plain, "✗ delete?") {
+		t.Fatalf("confirmation and marker missing:\n%s", plain)
+	}
+	press("n")
+	if m.overlay != overlayNone || m.deleteTarget() != nil {
+		t.Fatal("n cancels")
+	}
+	press("d")
+	if cmd := press("y"); cmd == nil || m.overlay != overlayNone || !strings.Contains(m.busy, "Delete comment") {
+		t.Fatalf("y should delete with a loader: busy=%q", m.busy)
+	}
+	m.busy = ""
+	// Unknown login: every comment is offered, newest preselected, j/k choose.
+	m.login = ""
+	press("d")
+	if len(m.delChoices) != 2 || m.delIdx != 1 || m.deleteTarget().Author != "bob" {
+		t.Fatalf("all comments offered, newest first: %d %d", len(m.delChoices), m.delIdx)
+	}
+	press("k")
+	if m.deleteTarget().Author != "alice" || !strings.Contains(ansi.Strip(m.View().Content), "choose (1/2)") {
+		t.Fatal("k should move to alice's comment")
+	}
+	press("esc")
+	if m.overlay != overlayNone {
+		t.Fatal("esc cancels")
+	}
+}
+
+func TestDebugKeys(t *testing.T) {
+	m := newTestModel(t)
+	m.SetDebugKeys(true)
+	m.cursor = 1
+	m.Update(tea.KeyPressMsg{Code: 'C', Text: "C"})
+	m.Update(tea.KeyPressMsg{Code: 'm', Mod: tea.ModCtrl}) // empty submit -> error status
+	plain := ansi.Strip(m.View().Content)
+	if m.lastKey != "ctrl+m" || !strings.Contains(plain, "key: ctrl+m") {
+		t.Fatalf("key name should show: %q", m.lastKey)
+	}
+	if !strings.Contains(plain, "Comment body is empty") {
+		t.Fatal("debug key display must not hide real status messages")
 	}
 }

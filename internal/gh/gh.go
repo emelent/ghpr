@@ -376,6 +376,23 @@ func (c *Client) AddLineComment(number int, commitID string, lc LineComment) err
 	return err
 }
 
+// CurrentUser returns the login of the authenticated gh user.
+func (c *Client) CurrentUser() (string, error) {
+	out, err := run(nil, "api", "user", "-q", ".login")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// DeleteReviewComment deletes a review comment (by REST id). Only the
+// author or a repository admin may do so; GitHub rejects it otherwise.
+func (c *Client) DeleteReviewComment(commentID int64) error {
+	endpoint := fmt.Sprintf("repos/%s/pulls/comments/%d", c.Repo, commentID)
+	_, err := run(nil, "api", "-X", "DELETE", endpoint)
+	return err
+}
+
 // ReplyToComment replies to an existing review comment (by REST id).
 func (c *Client) ReplyToComment(number int, commentID int64, body string) error {
 	payload, _ := json.Marshal(map[string]any{"body": body})
