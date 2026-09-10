@@ -1,0 +1,15 @@
+Create a tool for reviewing github pr's in the terminal
+
+Features:
+- view pr diff with syntax highlighting
+    - show diffs inline and side by side with toggle
+- creating comments
+- resolving comments
+- replying to comments
+- approving/rejecting
+- use loaders for progress when you perform actions
+
+Constraints:
+- TUI using golang
+- use bubbletea
+- Use gh tool get information and perform tasks

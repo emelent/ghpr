@@ -1,0 +1,848 @@
+// Package ui implements the bubbletea TUI for reviewing pull requests.
+package ui
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"ghpr/internal/diff"
+	"ghpr/internal/gh"
+)
+
+type screen int
+
+const (
+	screenPicker screen = iota
+	screenDiff
+)
+
+type overlayKind int
+
+const (
+	overlayNone overlayKind = iota
+	overlayInput
+	overlayReview
+	overlayHelp
+)
+
+type inputKind int
+
+const (
+	inputComment inputKind = iota
+	inputReply
+	inputReview
+	inputPRComment
+)
+
+const (
+	filesPanelWidth = 34
+	inputPanelH     = 10
+	statusTimeout   = 5 * time.Second
+)
+
+// Model is the root bubbletea model.
+type Model struct {
+	client *gh.Client
+	number int
+	hl     *Highlighter
+
+	width, height int
+	screen        screen
+	overlay       overlayKind
+
+	// picker
+	list list.Model
+
+	// data
+	pr      *gh.PR
+	files   []diff.File
+	threads []gh.Thread
+	pending int // outstanding loads
+
+	// diff view state
+	fileIdx      int
+	fileScroll   int
+	filesFocused bool
+	showFiles    bool
+	split        bool
+	rows         []row
+	rowStart     []int
+	totalH       int
+	threadH      map[int]int
+	numW         int
+	cursor       int
+	scroll       int
+	spans        map[*diff.Line][]Span
+	spanCache    map[int]map[*diff.Line][]Span
+
+	// async / status
+	spinner   spinner.Model
+	busy      string
+	status    string
+	statusErr bool
+	statusSeq int
+
+	// text entry
+	ta         textarea.Model
+	inputTitle string
+	inKind     inputKind
+	inPath     string
+	inLine     int
+	inSide     string
+	inThread   *gh.Thread
+	inEvent    gh.ReviewEvent
+
+	fatal error
+}
+
+// New creates a model. If number is 0 a PR picker is shown first.
+func New(client *gh.Client, number int, theme string) *Model {
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(colWarn).Background(colBarBg)
+
+	ta := textarea.New()
+	ta.ShowLineNumbers = false
+	ta.Prompt = "┃ "
+	ta.CharLimit = 0
+	ta.SetHeight(inputPanelH - 3)
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	ta.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(colWarn)
+	ta.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(colDim)
+
+	m := &Model{
+		client:    client,
+		number:    number,
+		hl:        NewHighlighter(theme),
+		spinner:   sp,
+		ta:        ta,
+		showFiles: true,
+		threadH:   map[int]int{},
+		spanCache: map[int]map[*diff.Line][]Span{},
+	}
+	d := list.NewDefaultDelegate()
+	d.Styles.SelectedTitle = d.Styles.SelectedTitle.Foreground(colAccent).BorderForeground(colAccent)
+	d.Styles.SelectedDesc = d.Styles.SelectedDesc.Foreground(colDim).BorderForeground(colAccent)
+	l := list.New(nil, d, 0, 0)
+	l.Title = fmt.Sprintf("Open pull requests · %s", client.Repo)
+	l.Styles.Title = lipgloss.NewStyle().Background(colSelBg).Foreground(colText).Padding(0, 1)
+	l.SetShowStatusBar(true)
+	l.SetFilteringEnabled(true)
+	m.list = l
+	m.screen = screenDiff
+	if number == 0 {
+		m.screen = screenPicker
+	}
+	return m
+}
+
+// ---------- messages ----------
+
+type prListMsg struct {
+	prs []gh.PRSummary
+	err error
+}
+type prMsg struct {
+	pr  *gh.PR
+	err error
+}
+type diffMsg struct {
+	files []diff.File
+	err   error
+}
+type threadsMsg struct {
+	threads []gh.Thread
+	err     error
+}
+type actionMsg struct {
+	label   string
+	err     error
+	refresh bool // reload threads (and PR) afterwards
+}
+type clearStatusMsg struct{ seq int }
+
+type prItem struct{ s gh.PRSummary }
+
+func (p prItem) Title() string {
+	t := fmt.Sprintf("#%d  %s", p.s.Number, p.s.Title)
+	if p.s.IsDraft {
+		t += "  [draft]"
+	}
+	return t
+}
+func (p prItem) Description() string {
+	d := p.s.ReviewDecision
+	if d == "" {
+		d = "no review"
+	}
+	return fmt.Sprintf("@%s · %s · %s · updated %s", p.s.Author.Login, p.s.HeadRefName, d, ago(p.s.UpdatedAt))
+}
+func (p prItem) FilterValue() string {
+	return p.Title() + " " + p.s.Author.Login + " " + p.s.HeadRefName
+}
+
+// ---------- commands ----------
+
+func (m *Model) fetchList() tea.Cmd {
+	c := m.client
+	return func() tea.Msg {
+		prs, err := c.ListPRs(100)
+		return prListMsg{prs, err}
+	}
+}
+
+func (m *Model) fetchPR() tea.Cmd {
+	c, n := m.client, m.number
+	return func() tea.Msg {
+		pr, err := c.ViewPR(n)
+		return prMsg{pr, err}
+	}
+}
+
+func (m *Model) fetchDiff() tea.Cmd {
+	c, n := m.client, m.number
+	return func() tea.Msg {
+		text, err := c.Diff(n)
+		if err != nil {
+			return diffMsg{nil, err}
+		}
+		return diffMsg{diff.Parse(text), nil}
+	}
+}
+
+func (m *Model) fetchThreads() tea.Cmd {
+	c, n := m.client, m.number
+	return func() tea.Msg {
+		th, err := c.ReviewThreads(n)
+		return threadsMsg{th, err}
+	}
+}
+
+func (m *Model) setBusy(msg string) tea.Cmd {
+	m.busy = msg
+	return m.spinner.Tick
+}
+
+func (m *Model) setStatus(msg string, isErr bool) tea.Cmd {
+	m.status = msg
+	m.statusErr = isErr
+	m.statusSeq++
+	seq := m.statusSeq
+	return tea.Tick(statusTimeout, func(time.Time) tea.Msg { return clearStatusMsg{seq} })
+}
+
+func (m *Model) loadAll() tea.Cmd {
+	m.pending = 3
+	return tea.Batch(m.setBusy(fmt.Sprintf("Loading PR #%d…", m.number)), m.fetchPR(), m.fetchDiff(), m.fetchThreads())
+}
+
+func (m *Model) reloadThreads(withPR bool) tea.Cmd {
+	cmds := []tea.Cmd{m.setBusy("Refreshing…"), m.fetchThreads()}
+	m.pending = 1
+	if withPR {
+		m.pending++
+		cmds = append(cmds, m.fetchPR())
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) action(label string, refresh bool, fn func() error) tea.Cmd {
+	busy := m.setBusy(label + "…")
+	return tea.Batch(busy, func() tea.Msg {
+		return actionMsg{label: label, err: fn(), refresh: refresh}
+	})
+}
+
+// ---------- init / update ----------
+
+// Init starts loading.
+func (m *Model) Init() tea.Cmd {
+	if m.screen == screenPicker {
+		return tea.Batch(m.setBusy("Loading pull requests…"), m.fetchList())
+	}
+	return m.loadAll()
+}
+
+// Update handles messages.
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		m.list.SetSize(msg.Width, msg.Height-1)
+		m.ta.SetWidth(max(10, m.diffWidth()-2))
+		m.invalidateLayout()
+		return m, nil
+
+	case spinner.TickMsg:
+		if m.busy == "" {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
+	case clearStatusMsg:
+		if msg.seq == m.statusSeq {
+			m.status = ""
+		}
+		return m, nil
+
+	case prListMsg:
+		m.busy = ""
+		if msg.err != nil {
+			m.fatal = msg.err
+			return m, tea.Quit
+		}
+		items := make([]list.Item, len(msg.prs))
+		for i, p := range msg.prs {
+			items[i] = prItem{p}
+		}
+		return m, m.list.SetItems(items)
+
+	case prMsg:
+		m.loadDone()
+		if msg.err != nil {
+			if m.pr == nil {
+				m.fatal = msg.err
+				return m, tea.Quit
+			}
+			return m, m.setStatus(msg.err.Error(), true)
+		}
+		m.pr = msg.pr
+		return m, nil
+
+	case diffMsg:
+		m.loadDone()
+		if msg.err != nil {
+			m.fatal = msg.err
+			return m, tea.Quit
+		}
+		m.files = msg.files
+		m.spanCache = map[int]map[*diff.Line][]Span{}
+		m.fileIdx = 0
+		m.cursor, m.scroll = 0, 0
+		m.rebuildRows()
+		return m, nil
+
+	case threadsMsg:
+		m.loadDone()
+		if msg.err != nil {
+			return m, m.setStatus("threads: "+msg.err.Error(), true)
+		}
+		m.threads = msg.threads
+		m.rebuildRows()
+		return m, nil
+
+	case actionMsg:
+		m.busy = ""
+		if msg.err != nil {
+			return m, m.setStatus(msg.label+" failed: "+msg.err.Error(), true)
+		}
+		cmds := []tea.Cmd{m.setStatus(msg.label+" ✓", false)}
+		if msg.refresh {
+			cmds = append(cmds, m.reloadThreads(true))
+		}
+		return m, tea.Batch(cmds...)
+
+	case tea.KeyMsg:
+		return m.handleKey(msg)
+	}
+
+	if m.screen == screenPicker {
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m *Model) loadDone() {
+	if m.pending > 0 {
+		m.pending--
+	}
+	if m.pending == 0 {
+		m.busy = ""
+	}
+}
+
+// Fatal returns the error that caused the program to exit, if any.
+func (m *Model) Fatal() error { return m.fatal }
+
+// ---------- keys ----------
+
+func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	if key == "ctrl+c" {
+		return m, tea.Quit
+	}
+
+	if m.screen == screenPicker {
+		if m.list.FilterState() != list.Filtering {
+			switch key {
+			case "q":
+				return m, tea.Quit
+			case "enter":
+				if it, ok := m.list.SelectedItem().(prItem); ok {
+					m.number = it.s.Number
+					m.screen = screenDiff
+					return m, m.loadAll()
+				}
+			}
+		}
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(msg)
+		return m, cmd
+	}
+
+	switch m.overlay {
+	case overlayInput:
+		switch key {
+		case "esc":
+			m.closeInput()
+			return m, nil
+		case "ctrl+s":
+			return m, m.submitInput()
+		}
+		var cmd tea.Cmd
+		m.ta, cmd = m.ta.Update(msg)
+		return m, cmd
+
+	case overlayReview:
+		switch key {
+		case "a":
+			m.overlay = overlayNone
+			m.openInput(inputReview, fmt.Sprintf("Approve PR #%d — optional comment", m.number))
+			m.inEvent = gh.Approve
+		case "r":
+			m.overlay = overlayNone
+			m.openInput(inputReview, fmt.Sprintf("Request changes on PR #%d — explain what needs to change", m.number))
+			m.inEvent = gh.RequestChanges
+		case "c":
+			m.overlay = overlayNone
+			m.openInput(inputReview, fmt.Sprintf("Review comment on PR #%d", m.number))
+			m.inEvent = gh.CommentReview
+		case "esc", "v", "q":
+			m.overlay = overlayNone
+		}
+		return m, nil
+
+	case overlayHelp:
+		m.overlay = overlayNone
+		return m, nil
+	}
+
+	switch key {
+	case "q":
+		return m, tea.Quit
+	case "?":
+		m.overlay = overlayHelp
+	case "tab":
+		m.filesFocused = !m.filesFocused
+		if m.filesFocused {
+			m.showFiles = true
+		}
+	case "f":
+		m.showFiles = !m.showFiles
+		if !m.showFiles {
+			m.filesFocused = false
+		}
+		m.invalidateLayout()
+	case "s":
+		m.split = !m.split
+		m.rebuildRows()
+	case "R":
+		return m, m.loadAll()
+	case "o":
+		return m, m.action("Open in browser", false, func() error { return m.client.OpenInBrowser(m.number) })
+	case "v":
+		if m.busy == "" {
+			m.overlay = overlayReview
+		}
+	case "C":
+		m.openInput(inputPRComment, fmt.Sprintf("Comment on PR #%d", m.number))
+	case "j", "down":
+		if m.filesFocused {
+			m.selectFile(m.fileIdx + 1)
+		} else {
+			m.moveCursor(1)
+		}
+	case "k", "up":
+		if m.filesFocused {
+			m.selectFile(m.fileIdx - 1)
+		} else {
+			m.moveCursor(-1)
+		}
+	case "enter":
+		if m.filesFocused {
+			m.filesFocused = false
+		}
+	case "ctrl+d", "pgdown", " ":
+		m.moveCursor(m.viewportH() / 2)
+	case "ctrl+u", "pgup":
+		m.moveCursor(-m.viewportH() / 2)
+	case "g", "home":
+		m.cursor = 0
+		m.scroll = 0
+	case "G", "end":
+		m.cursor = max(0, len(m.rows)-1)
+	case "]", "l", "right":
+		m.selectFile(m.fileIdx + 1)
+	case "[", "h", "left":
+		m.selectFile(m.fileIdx - 1)
+	case "n":
+		m.jumpThread(1)
+	case "N":
+		m.jumpThread(-1)
+	case "c":
+		return m, m.startComment()
+	case "r":
+		return m, m.startReply()
+	case "x":
+		return m, m.toggleResolve()
+	}
+	return m, nil
+}
+
+// ---------- navigation ----------
+
+func (m *Model) selectFile(i int) {
+	if len(m.files) == 0 {
+		return
+	}
+	if i < 0 {
+		i = 0
+	}
+	if i >= len(m.files) {
+		i = len(m.files) - 1
+	}
+	if i == m.fileIdx {
+		return
+	}
+	m.fileIdx = i
+	m.cursor, m.scroll = 0, 0
+	m.rebuildRows()
+}
+
+func (m *Model) moveCursor(d int) {
+	if len(m.rows) == 0 {
+		return
+	}
+	m.cursor += d
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= len(m.rows) {
+		m.cursor = len(m.rows) - 1
+	}
+}
+
+// jumpThread moves the cursor to the next/previous thread row, crossing
+// file boundaries and wrapping around.
+func (m *Model) jumpThread(dir int) {
+	if len(m.files) == 0 {
+		return
+	}
+	// Current file first.
+	for i := m.cursor + dir; i >= 0 && i < len(m.rows); i += dir {
+		if m.rows[i].kind == rowThread {
+			m.cursor = i
+			return
+		}
+	}
+	for step := 1; step <= len(m.files); step++ {
+		fi := ((m.fileIdx+dir*step)%len(m.files) + len(m.files)) % len(m.files)
+		rows := buildRows(&m.files[fi], m.split, m.threads)
+		var found = -1
+		if dir > 0 {
+			for i := range rows {
+				if rows[i].kind == rowThread {
+					found = i
+					break
+				}
+			}
+		} else {
+			for i := len(rows) - 1; i >= 0; i-- {
+				if rows[i].kind == rowThread {
+					found = i
+					break
+				}
+			}
+		}
+		if found >= 0 {
+			m.fileIdx = fi
+			m.scroll = 0
+			m.rebuildRows()
+			m.cursor = found
+			return
+		}
+	}
+}
+
+// ---------- layout ----------
+
+func (m *Model) filesWidth() int {
+	if !m.showFiles {
+		return 0
+	}
+	w := filesPanelWidth
+	if m.width < 100 {
+		w = max(20, m.width/4)
+	}
+	return w
+}
+
+func (m *Model) diffWidth() int {
+	w := m.width
+	if m.showFiles {
+		w -= m.filesWidth() + 1
+	}
+	return max(10, w)
+}
+
+func (m *Model) mainHeight() int { return max(3, m.height-3) }
+
+// viewportH is the number of diff rows visible (excluding pane header).
+func (m *Model) viewportH() int {
+	h := m.mainHeight() - 2
+	if m.overlay == overlayInput {
+		h -= inputPanelH
+	}
+	return max(1, h)
+}
+
+func (m *Model) invalidateLayout() {
+	m.threadH = map[int]int{}
+	m.computeOffsets()
+}
+
+func (m *Model) rebuildRows() {
+	if len(m.files) == 0 {
+		m.rows = nil
+		m.rowStart = nil
+		return
+	}
+	f := &m.files[m.fileIdx]
+	if sp, ok := m.spanCache[m.fileIdx]; ok {
+		m.spans = sp
+	} else {
+		m.spans = m.hl.HighlightFile(f)
+		m.spanCache[m.fileIdx] = m.spans
+	}
+	m.rows = buildRows(f, m.split, m.threads)
+	maxNum := 1
+	for _, h := range f.Hunks {
+		maxNum = max(maxNum, h.OldStart+h.OldCount)
+		maxNum = max(maxNum, h.NewStart+h.NewCount)
+	}
+	m.numW = max(3, digits(maxNum))
+	if m.cursor >= len(m.rows) {
+		m.cursor = max(0, len(m.rows)-1)
+	}
+	m.invalidateLayout()
+}
+
+func (m *Model) computeOffsets() {
+	m.rowStart = make([]int, len(m.rows))
+	y := 0
+	for i := range m.rows {
+		m.rowStart[i] = y
+		y += m.rowHeight(i)
+	}
+	m.totalH = y
+}
+
+func (m *Model) ensureCursorVisible(avail int) {
+	if len(m.rows) == 0 {
+		m.scroll = 0
+		return
+	}
+	top := m.rowStart[m.cursor]
+	bottom := top + m.rowHeight(m.cursor)
+	if top < m.scroll {
+		m.scroll = top
+	}
+	if bottom > m.scroll+avail {
+		m.scroll = bottom - avail
+	}
+	if m.scroll > max(0, m.totalH-avail) {
+		m.scroll = max(0, m.totalH-avail)
+	}
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+}
+
+// ---------- text entry & actions ----------
+
+func (m *Model) openInput(kind inputKind, title string) {
+	m.inKind = kind
+	m.inputTitle = title
+	m.ta.Reset()
+	m.ta.SetWidth(max(10, m.diffWidth()-2))
+	m.ta.Focus()
+	m.overlay = overlayInput
+}
+
+func (m *Model) closeInput() {
+	m.ta.Blur()
+	m.overlay = overlayNone
+	m.inThread = nil
+}
+
+func (m *Model) currentRow() *row {
+	if len(m.rows) == 0 || m.cursor >= len(m.rows) {
+		return nil
+	}
+	return &m.rows[m.cursor]
+}
+
+func (m *Model) startComment() tea.Cmd {
+	if m.busy != "" || m.pr == nil {
+		return nil
+	}
+	r := m.currentRow()
+	if r == nil {
+		return nil
+	}
+	line, side, ok := r.anchor()
+	if !ok {
+		return m.setStatus("Move the cursor onto a diff line to comment", true)
+	}
+	f := &m.files[m.fileIdx]
+	m.inPath, m.inLine, m.inSide = f.Path(), line, side
+	m.openInput(inputComment, fmt.Sprintf("New comment on %s:%d (%s)", m.inPath, line, side))
+	return nil
+}
+
+func (m *Model) startReply() tea.Cmd {
+	if m.busy != "" {
+		return nil
+	}
+	r := m.currentRow()
+	if r == nil || r.kind != rowThread {
+		return m.setStatus("Move the cursor onto a thread to reply", true)
+	}
+	if len(r.thread.Comments) == 0 {
+		return m.setStatus("Thread has no comments to reply to", true)
+	}
+	m.inThread = r.thread
+	first := r.thread.Comments[0]
+	m.openInput(inputReply, fmt.Sprintf("Reply to @%s on %s:%d", first.Author, r.thread.Path, max(r.thread.Line, r.thread.OriginalLine)))
+	return nil
+}
+
+func (m *Model) toggleResolve() tea.Cmd {
+	if m.busy != "" {
+		return nil
+	}
+	r := m.currentRow()
+	if r == nil || r.kind != rowThread {
+		return m.setStatus("Move the cursor onto a thread to resolve it", true)
+	}
+	t := r.thread
+	if t.IsResolved {
+		return m.action("Unresolve thread", true, func() error { return m.client.UnresolveThread(t.ID) })
+	}
+	return m.action("Resolve thread", true, func() error { return m.client.ResolveThread(t.ID) })
+}
+
+func (m *Model) submitInput() tea.Cmd {
+	body := strings.TrimSpace(m.ta.Value())
+	kind := m.inKind
+	needsBody := kind != inputReview || m.inEvent != gh.Approve
+	if needsBody && body == "" {
+		return m.setStatus("Comment body is empty", true)
+	}
+	thread := m.inThread // closeInput clears it
+	m.closeInput()
+	c, n := m.client, m.number
+	switch kind {
+	case inputComment:
+		path, line, side, sha := m.inPath, m.inLine, m.inSide, m.pr.HeadRefOid
+		return m.action("Post comment", true, func() error {
+			return c.AddLineComment(n, sha, path, line, side, body)
+		})
+	case inputReply:
+		if thread == nil || len(thread.Comments) == 0 {
+			return m.setStatus("No thread selected for reply", true)
+		}
+		id := thread.Comments[0].DatabaseID
+		return m.action("Post reply", true, func() error { return c.ReplyToComment(n, id, body) })
+	case inputPRComment:
+		return m.action("Post PR comment", false, func() error { return c.Comment(n, body) })
+	case inputReview:
+		ev := m.inEvent
+		label := map[gh.ReviewEvent]string{gh.Approve: "Approve", gh.RequestChanges: "Request changes", gh.CommentReview: "Submit review"}[ev]
+		return m.action(label, true, func() error { return c.Review(n, ev, body) })
+	}
+	return nil
+}
+
+// ---------- view ----------
+
+// View renders the UI.
+func (m *Model) View() string {
+	if m.width == 0 {
+		return "loading…"
+	}
+	if m.screen == screenPicker {
+		return m.list.View() + "\n" + m.renderStatus(m.width)
+	}
+
+	header := m.renderHeader(m.width)
+	mainH := m.mainHeight()
+	dw := m.diffWidth()
+
+	var right []string
+	if m.overlay == overlayHelp {
+		right = m.renderHelp(dw, mainH)
+	} else {
+		diffH := mainH
+		if m.overlay == overlayInput {
+			diffH -= inputPanelH
+		}
+		right = m.renderDiff(dw, diffH)
+		if m.overlay == overlayInput {
+			right = append(right, m.renderInput(dw, inputPanelH)...)
+		}
+	}
+
+	var body []string
+	if m.showFiles {
+		left := m.renderFiles(m.filesWidth(), mainH)
+		sep := styBorder.Render("│")
+		for i := 0; i < mainH; i++ {
+			l, r := "", ""
+			if i < len(left) {
+				l = left[i]
+			}
+			if i < len(right) {
+				r = right[i]
+			}
+			body = append(body, l+sep+r)
+		}
+	} else {
+		body = right
+	}
+	for len(body) < mainH {
+		body = append(body, "")
+	}
+
+	var sb strings.Builder
+	sb.WriteString(strings.Join(header, "\n"))
+	sb.WriteString("\n")
+	sb.WriteString(strings.Join(body[:mainH], "\n"))
+	sb.WriteString("\n")
+	sb.WriteString(m.renderStatus(m.width))
+	return sb.String()
+}
+
+// SetSplit sets the initial diff layout.
+func (m *Model) SetSplit(v bool) { m.split = v }
