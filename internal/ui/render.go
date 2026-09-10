@@ -382,7 +382,7 @@ func (m *Model) renderStatus(width int) string {
 	}
 	var right string
 	if m.overlay == overlayInput {
-		right = styBarKey.Render("ctrl+s") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
+		right = styBarKey.Render("⌘+enter") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
 	} else {
 		hints := []struct{ k, v string }{{"j/k", "move"}, {"s", "split"}, {"c", "comment"}, {"r", "reply"}, {"x", "resolve"}, {"v", "review"}, {"?", "help"}}
 		var sb strings.Builder
@@ -434,7 +434,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"C", "comment on the PR (general)"},
 		{"o", "open the PR in the browser"},
 		{"R", "refresh PR, diff and threads"},
-		{"ctrl+s / esc", "submit / cancel text entry"},
+		{"⌘+enter / esc", "submit / cancel text entry (ctrl+enter also submits)"},
 		{"?", "toggle this help"},
 		{"q", "quit"},
 	}

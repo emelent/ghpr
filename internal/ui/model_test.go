@@ -171,7 +171,7 @@ func TestInputFlow(t *testing.T) {
 		t.Fatalf("title missing")
 	}
 	// Empty submit is rejected.
-	m.handleKey(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModSuper})
 	if m.overlay != overlayInput || !m.statusErr {
 		t.Fatalf("empty body should be rejected")
 	}

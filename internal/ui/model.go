@@ -411,7 +411,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.closeInput()
 			return m, nil
-		case "ctrl+s":
+		case "super+enter", "meta+enter", "ctrl+enter":
+			// cmd+enter on macOS (reported as super/meta by terminals that
+			// support the kitty keyboard protocol); ctrl+enter elsewhere.
 			return m, m.submitInput()
 		}
 		var cmd tea.Cmd

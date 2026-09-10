@@ -103,11 +103,16 @@ Press `?` inside the app for this list.
 
 | Key | Action |
 | --- | --- |
-| `ctrl+s` | Submit |
+| `⌘+enter` (also `ctrl+enter`) | Submit |
 | `esc` | Cancel |
 
-An approval may be submitted with an empty body. Every other comment or
-review needs text.
+`enter` inserts a newline. An approval may be submitted with an empty body.
+Every other comment or review needs text.
+
+The Command key only reaches terminal apps when the terminal supports the
+kitty keyboard protocol (Ghostty, kitty, WezTerm, recent iTerm2). Inside tmux,
+add `set -s extended-keys on` to your tmux config so the modifier is passed
+through. Where Command is not reported, use `ctrl+enter`.
 
 ### General
 
