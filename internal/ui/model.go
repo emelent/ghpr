@@ -77,18 +77,23 @@ type Model struct {
 	fileScroll   int
 	filesFocused bool
 	showFiles    bool
-	split        bool
-	rows         []row
-	rowStart     []int
-	totalH       int
-	threadH      map[int]int
-	numW         int
-	cursor       int
-	scroll       int
-	selecting    bool // visual line selection active
-	selAnchor    int  // row index where the selection started
-	spans        map[*diff.Line][]Span
-	spanCache    map[int]map[*diff.Line][]Span
+	// file panel: tree or flat list
+	tree      bool
+	collapsed map[string]bool
+	treeNodes []treeNode
+	treeSel   string // path of the selected tree node (dir or file)
+	split     bool
+	rows      []row
+	rowStart  []int
+	totalH    int
+	threadH   map[int]int
+	numW      int
+	cursor    int
+	scroll    int
+	selecting bool // visual line selection active
+	selAnchor int  // row index where the selection started
+	spans     map[*diff.Line][]Span
+	spanCache map[int]map[*diff.Line][]Span
 
 	// full-file view
 	full        bool               // show whole files instead of hunks
@@ -142,6 +147,8 @@ func New(client *gh.Client, number int, syntax string) *Model {
 		spinner:     sp,
 		ta:          ta,
 		showFiles:   true,
+		tree:        true,
+		collapsed:   map[string]bool{},
 		threadH:     map[int]int{},
 		spanCache:   map[int]map[*diff.Line][]Span{},
 		fullFiles:   map[int]*diff.File{},
@@ -391,6 +398,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fileIdx = 0
 		m.cursor, m.scroll = 0, 0
 		m.rebuildRows()
+		m.revealFile(0)
 		cmds := []tea.Cmd{m.ensureFull()}
 		if dropped > 0 {
 			cmds = append(cmds, m.setStatus(fmt.Sprintf("%d file(s) changed since you viewed them – unmarked", dropped), false))
@@ -524,6 +532,12 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.filesFocused {
+		if handled, cmd := m.handleFilesKey(key); handled {
+			return m, cmd
+		}
+	}
+
 	switch key {
 	case "q":
 		if m.selecting {
@@ -531,6 +545,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tea.Quit
+	case "t":
+		m.tree = !m.tree
+		m.fileScroll = 0
+		m.revealFile(m.fileIdx)
 	case "esc":
 		m.clearSelection()
 	case "V":
@@ -559,9 +577,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.ensureFull()
 	case "m":
 		return m, m.toggleViewed()
-	case "}":
+	case "J":
 		m.jumpChange(1)
-	case "{":
+	case "K":
 		m.jumpChange(-1)
 	case "R":
 		return m, m.loadAll()
@@ -574,19 +592,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "C":
 		m.openInput(inputPRComment, fmt.Sprintf("Comment on PR #%d", m.number))
 	case "j", "down":
-		if m.filesFocused {
-			return m, m.selectFile(m.fileIdx + 1)
-		}
 		m.moveCursor(1)
 	case "k", "up":
-		if m.filesFocused {
-			return m, m.selectFile(m.fileIdx - 1)
-		}
 		m.moveCursor(-1)
-	case "enter":
-		if m.filesFocused {
-			m.filesFocused = false
-		}
 	case "ctrl+d", "pgdown", "space":
 		m.moveCursor(m.viewportH() / 2)
 	case "ctrl+u", "pgup":
@@ -633,7 +641,133 @@ func (m *Model) selectFile(i int) tea.Cmd {
 	m.cursor, m.scroll = 0, 0
 	m.clearSelection()
 	m.rebuildRows()
+	m.revealFile(i)
 	return m.ensureFull()
+}
+
+// ---------- file panel ----------
+
+// rebuildTree recomputes the visible tree nodes.
+func (m *Model) rebuildTree() {
+	m.treeNodes = buildTree(m.files, m.collapsed, m.isViewed)
+}
+
+// revealFile expands the ancestors of file i and selects it in the panel.
+func (m *Model) revealFile(i int) {
+	if i < 0 || i >= len(m.files) {
+		return
+	}
+	path := m.files[i].Path()
+	for _, d := range dirsOf(path) {
+		delete(m.collapsed, d)
+	}
+	m.treeSel = path
+	m.rebuildTree()
+}
+
+// treeIndex returns the index of the selected node in treeNodes (or the
+// current file's node when the selection is stale).
+func (m *Model) treeIndex() int {
+	for i := range m.treeNodes {
+		if m.treeNodes[i].path == m.treeSel {
+			return i
+		}
+	}
+	if m.fileIdx < len(m.files) {
+		p := m.files[m.fileIdx].Path()
+		for i := range m.treeNodes {
+			if !m.treeNodes[i].isDir && m.treeNodes[i].path == p {
+				return i
+			}
+		}
+	}
+	return 0
+}
+
+// handleFilesKey processes keys while the file panel is focused. It returns
+// handled=false for keys that should fall through to the normal bindings.
+func (m *Model) handleFilesKey(key string) (bool, tea.Cmd) {
+	if len(m.files) == 0 {
+		return false, nil
+	}
+	if !m.tree {
+		switch key {
+		case "j", "down":
+			return true, m.selectFile(m.fileIdx + 1)
+		case "k", "up":
+			return true, m.selectFile(m.fileIdx - 1)
+		case "enter", "space":
+			m.filesFocused = false
+			return true, nil
+		}
+		return false, nil
+	}
+	if len(m.treeNodes) == 0 {
+		m.rebuildTree()
+	}
+	idx := m.treeIndex()
+	node := &m.treeNodes[idx]
+	move := func(d int) tea.Cmd {
+		n := idx + d
+		if n < 0 || n >= len(m.treeNodes) {
+			return nil
+		}
+		m.treeSel = m.treeNodes[n].path
+		if !m.treeNodes[n].isDir {
+			return m.selectFile(m.treeNodes[n].fileIdx)
+		}
+		return nil
+	}
+	switch key {
+	case "j", "down":
+		return true, move(1)
+	case "k", "up":
+		return true, move(-1)
+	case "enter", "space":
+		if node.isDir {
+			m.collapsed[node.path] = !m.collapsed[node.path]
+			m.rebuildTree()
+			return true, nil
+		}
+		m.filesFocused = false
+		return true, m.selectFile(node.fileIdx)
+	case "l", "right":
+		if node.isDir && m.collapsed[node.path] {
+			delete(m.collapsed, node.path)
+			m.rebuildTree()
+		}
+		return true, nil
+	case "h", "left":
+		if node.isDir && !m.collapsed[node.path] {
+			m.collapsed[node.path] = true
+			m.rebuildTree()
+			return true, nil
+		}
+		// Jump to the parent directory node.
+		parent := node.path[:max(0, strings.LastIndex(node.path, "/"))]
+		for i := idx - 1; i >= 0; i-- {
+			n := &m.treeNodes[i]
+			if n.isDir && n.depth == node.depth-1 && strings.HasPrefix(parent, n.path) {
+				m.treeSel = n.path
+				break
+			}
+		}
+		return true, nil
+	case "H":
+		for i := range m.treeNodes {
+			if m.treeNodes[i].isDir {
+				m.collapsed[m.treeNodes[i].path] = true
+			}
+		}
+		m.rebuildTree()
+		m.revealFile(m.fileIdx)
+		return true, nil
+	case "L":
+		m.collapsed = map[string]bool{}
+		m.rebuildTree()
+		return true, nil
+	}
+	return false, nil
 }
 
 // rowChanged reports whether row i shows an added or removed line.

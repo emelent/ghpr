@@ -522,3 +522,168 @@ func TestViewedMarks(t *testing.T) {
 		t.Fatal("expected disabled message")
 	}
 }
+
+const treeSample = `diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1 +1 @@
+-a
++b
+diff --git a/internal/ui/model.go b/internal/ui/model.go
+--- a/internal/ui/model.go
++++ b/internal/ui/model.go
+@@ -1 +1 @@
+-a
++b
+diff --git a/internal/ui/render.go b/internal/ui/render.go
+--- a/internal/ui/render.go
++++ b/internal/ui/render.go
+@@ -1 +1,2 @@
+-a
++b
++c
+diff --git a/cmd/x/deep/main.go b/cmd/x/deep/main.go
+--- a/cmd/x/deep/main.go
++++ b/cmd/x/deep/main.go
+@@ -1 +1 @@
+-a
++b
+`
+
+func newTreeModel(t *testing.T) *Model {
+	m := New(&gh.Client{Repo: "o/r"}, 7, "")
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m.pr = &gh.PR{Number: 7, HeadRefOid: "abc"}
+	m.pending = 1
+	m.Update(diffMsg{files: diff.Parse(treeSample)})
+	return m
+}
+
+func labels(nodes []treeNode) []string {
+	var out []string
+	for _, n := range nodes {
+		l := strings.Repeat(" ", n.depth) + n.label
+		if n.isDir {
+			l += "/"
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+func TestTreeBuild(t *testing.T) {
+	m := newTreeModel(t)
+	got := strings.Join(labels(m.treeNodes), "|")
+	want := "cmd/x/deep/| main.go|internal/ui/| model.go| render.go|README.md"
+	if got != want {
+		t.Fatalf("tree\n got %s\nwant %s", got, want)
+	}
+	// Aggregates on the compacted node.
+	if n := m.treeNodes[2]; n.files != 2 || n.adds != 3 || n.dels != 2 {
+		t.Fatalf("aggregate %+v", n)
+	}
+	m.collapsed["internal/ui"] = true
+	m.rebuildTree()
+	if got := strings.Join(labels(m.treeNodes), "|"); got != "cmd/x/deep/| main.go|internal/ui/|README.md" {
+		t.Fatalf("collapsed tree: %s", got)
+	}
+}
+
+func TestTreeNavigation(t *testing.T) {
+	m := newTreeModel(t)
+	key := func(k string) {
+		switch k {
+		case "enter":
+			m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+		case "tab":
+			m.handleKey(tea.KeyPressMsg{Code: tea.KeyTab})
+		default:
+			m.handleKey(tea.KeyPressMsg{Code: rune(k[0]), Text: k})
+		}
+	}
+	// File 0 in diff order is README.md; the tree selects it.
+	if m.fileIdx != 0 || m.treeSel != "README.md" {
+		t.Fatalf("initial selection %d %q", m.fileIdx, m.treeSel)
+	}
+	key("tab")
+	key("k") // render.go
+	if m.files[m.fileIdx].Path() != "internal/ui/render.go" {
+		t.Fatalf("k should move onto render.go, got %s", m.files[m.fileIdx].Path())
+	}
+	key("k") // model.go
+	key("k") // dir internal/ui: diff stays on model.go
+	if m.treeSel != "internal/ui" || m.files[m.fileIdx].Path() != "internal/ui/model.go" {
+		t.Fatalf("dir node selected but file kept: %q %s", m.treeSel, m.files[m.fileIdx].Path())
+	}
+	key("enter") // collapse
+	if !m.collapsed["internal/ui"] || len(m.treeNodes) != 4 {
+		t.Fatalf("enter should collapse: %v %d", m.collapsed, len(m.treeNodes))
+	}
+	key("l") // expand
+	if m.collapsed["internal/ui"] {
+		t.Fatal("l should expand")
+	}
+	key("h") // collapse again
+	if !m.collapsed["internal/ui"] {
+		t.Fatal("h should collapse")
+	}
+	// Selecting a hidden file from the diff side reveals it.
+	m.filesFocused = false
+	m.selectFile(2) // render.go
+	if m.collapsed["internal/ui"] || m.treeSel != "internal/ui/render.go" {
+		t.Fatalf("selectFile should reveal: collapsed=%v sel=%q", m.collapsed, m.treeSel)
+	}
+	// h on a file jumps to its directory.
+	m.filesFocused = true
+	key("h")
+	if m.treeSel != "internal/ui" {
+		t.Fatalf("h on file should select parent, got %q", m.treeSel)
+	}
+	key("H")
+	if !m.collapsed["cmd/x/deep"] || m.collapsed["internal/ui"] {
+		t.Fatalf("H collapses all but keeps the current file visible: %v", m.collapsed)
+	}
+	key("L")
+	if len(m.collapsed) != 0 {
+		t.Fatal("L expands all")
+	}
+	// Enter on a file returns focus to the diff.
+	m.treeSel = "README.md"
+	key("enter")
+	if m.filesFocused || m.fileIdx != 0 {
+		t.Fatal("enter on file should open it and unfocus the panel")
+	}
+	// Flat mode still works and renders full-width.
+	key("t")
+	if m.tree {
+		t.Fatal("t toggles flat")
+	}
+	for _, l := range lines(m.View().Content) {
+		if ansi.StringWidth(l) != 120 {
+			t.Fatalf("flat width %q", ansi.Strip(l))
+		}
+	}
+	key("t")
+	for _, l := range lines(m.View().Content) {
+		if ansi.StringWidth(l) != 120 {
+			t.Fatalf("tree width %q", ansi.Strip(l))
+		}
+	}
+	if !strings.Contains(ansi.Strip(m.View().Content), "internal/ui/") {
+		t.Fatal("tree should render directory nodes")
+	}
+}
+
+func TestJumpChangeKeys(t *testing.T) {
+	m := newTestModel(t)
+	m.cursor = 0
+	m.handleKey(tea.KeyPressMsg{Code: 'J', Text: "J", Mod: tea.ModShift})
+	if m.cursor != 3 {
+		t.Fatalf("J should jump to the first change (row 3), got %d", m.cursor)
+	}
+	m.handleKey(tea.KeyPressMsg{Code: 'J', Text: "J", Mod: tea.ModShift})
+	m.handleKey(tea.KeyPressMsg{Code: 'K', Text: "K", Mod: tea.ModShift})
+	if m.cursor != 3 {
+		t.Fatalf("K should return to row 3, got %d", m.cursor)
+	}
+}

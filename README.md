@@ -11,7 +11,7 @@ reuses your existing `gh` login and works with any host `gh` is configured for.
 - Syntax-highlighted diffs (via chroma), inline or side-by-side with a single-key toggle
 - Full-file view that shows the whole file with the changes in place, and next/previous change navigation
 - Mark files as viewed. Marks persist locally with a timestamp and are dropped automatically when a file changes after you viewed it
-- File list with per-file change counts and open/resolved thread badges
+- File tree (or flat list) with per-file change counts and open/resolved thread badges; directories collapse and single-child paths are compacted
 - Review threads rendered inline under the lines they belong to
 - Create single-line and multi-line comments, reply to threads, resolve/unresolve threads
 - Submit reviews: approve, request changes, or comment
@@ -92,10 +92,13 @@ Press `?` inside the app for this list.
 | `ctrl+d` / `ctrl+u`, `pgdn` / `pgup`, `space` | Half page down / up |
 | `g` / `G` | Top / bottom of file |
 | `]` / `[`, `l` / `h` | Next / previous file |
-| `}` / `{` | Next / previous change in the file |
+| `J` / `K` | Next / previous change in the file |
 | `n` / `N` | Next / previous review thread (crosses files) |
 | `tab` | Switch focus between file list and diff |
 | `f` | Show / hide the file list |
+| `t` | File list as a directory tree (default) or a flat list |
+
+When the file panel is focused in tree mode: `j`/`k` move through directories and files, `enter` or `space` toggles a directory (or opens a file and returns focus to the diff), `h`/`l` collapse / expand (`h` on a file jumps to its directory), `H`/`L` collapse / expand everything. Collapsed directories show file, viewed and change counts.
 | `s` | Toggle inline / side-by-side diff |
 | `m` | Mark / unmark the current file as viewed and move to the next file. Viewed files show a ✓ in the file list and the header shows when you viewed them |
 | `F` | Toggle full-file view. Fetches the file at the PR head and shows every line with the hunks in place. Comments are still limited to lines that are part of the diff, as GitHub requires |

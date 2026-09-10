@@ -246,6 +246,9 @@ func (m *Model) renderFiles(width, height int) []string {
 	if avail < 1 {
 		return lines[:min(len(lines), height)]
 	}
+	if m.tree {
+		return m.renderTree(lines, width, height, avail)
+	}
 	// Keep selection visible.
 	if m.fileIdx < m.fileScroll {
 		m.fileScroll = m.fileIdx
@@ -289,6 +292,87 @@ func (m *Model) renderFiles(width, height int) []string {
 			} else {
 				line = styFileSelD.Render(ansi.Strip(line))
 			}
+		}
+		lines = append(lines, line)
+	}
+	for len(lines) < height {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
+	return lines
+}
+
+// renderTree renders the file panel as a directory tree.
+func (m *Model) renderTree(lines []string, width, height, avail int) []string {
+	m.rebuildTree()
+	sel := m.treeIndex()
+	if sel < m.fileScroll {
+		m.fileScroll = sel
+	}
+	if sel >= m.fileScroll+avail {
+		m.fileScroll = sel - avail + 1
+	}
+	for i := m.fileScroll; i < len(m.treeNodes) && len(lines) < height; i++ {
+		n := &m.treeNodes[i]
+		indent := strings.Repeat("  ", n.depth)
+		var line string
+		if n.isDir {
+			arrow := "▾ "
+			if m.collapsed[n.path] {
+				arrow = "▸ "
+			}
+			tail := ""
+			if m.collapsed[n.path] {
+				tail = styDim.Render(fmt.Sprintf(" %d", n.files))
+				if n.viewed == n.files {
+					tail = styOK.Render(fmt.Sprintf(" ✓%d", n.files))
+				} else if n.viewed > 0 {
+					tail = styDim.Render(fmt.Sprintf(" %d/%d", n.viewed, n.files))
+				}
+				tail += " " + styOK.Render(fmt.Sprintf("+%d", n.adds)) + " " + styErr.Render(fmt.Sprintf("-%d", n.dels))
+			}
+			nameW := width - 1 - len(indent) - 2 - ansi.StringWidth(tail)
+			if nameW < 4 {
+				nameW, tail = 4, ""
+			}
+			name := styAccent.Render(truncateTail(n.label+"/", nameW))
+			line = " " + indent + styDim.Render(arrow) + padRight(name, nameW) + tail
+		} else {
+			f := &m.files[n.fileIdx]
+			open, total := m.threadCount(f.Path())
+			badge := ""
+			if total > 0 {
+				if open > 0 {
+					badge = styWarn.Render(fmt.Sprintf(" ●%d", open))
+				} else {
+					badge = styOK.Render(fmt.Sprintf(" ✓%d", total))
+				}
+			}
+			counts := styOK.Render(fmt.Sprintf("+%d", f.Additions)) + " " + styErr.Render(fmt.Sprintf("-%d", f.Deletions))
+			tail := badge + " " + counts
+			viewed := m.isViewed(f.Path())
+			mark := " "
+			if viewed {
+				mark = styOK.Render("✓")
+			}
+			nameW := width - len(indent) - 3 - ansi.StringWidth(tail)
+			if nameW < 4 {
+				nameW, tail = 4, ""
+			}
+			name := truncateTail(n.label, nameW)
+			if viewed {
+				name = styDim.Render(name)
+			}
+			line = mark + indent + statusLetter(f.Status) + " " + padRight(name, nameW) + tail
+		}
+		line = padRight(line, width)
+		if i == sel {
+			if m.filesFocused {
+				line = styFileSel.Render(ansi.Strip(line))
+			} else if !n.isDir {
+				line = styFileSelD.Render(ansi.Strip(line))
+			}
+		} else if !n.isDir && n.fileIdx == m.fileIdx && m.filesFocused {
+			line = styFileSelD.Render(ansi.Strip(line))
 		}
 		lines = append(lines, line)
 	}
@@ -438,7 +522,7 @@ func (m *Model) renderStatus(width int) string {
 	if m.overlay == overlayInput {
 		right = styBarKey.Render("⌘+enter") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
 	} else {
-		hints := []struct{ k, v string }{{"j/k", "move"}, {"}/{", "change"}, {"m", "viewed"}, {"s", "split"}, {"F", "full"}, {"V", "select"}, {"c", "comment"}, {"r", "reply"}, {"x", "resolve"}, {"v", "review"}, {"?", "help"}}
+		hints := []struct{ k, v string }{{"j/k", "move"}, {"J/K", "change"}, {"m", "viewed"}, {"s", "split"}, {"F", "full"}, {"V", "select"}, {"c", "comment"}, {"r", "reply"}, {"x", "resolve"}, {"v", "review"}, {"?", "help"}}
 		var sb strings.Builder
 		for _, h := range hints {
 			sb.WriteString(styBarKey.Render(h.k) + styBarDim.Render(" "+h.v+"  "))
@@ -477,10 +561,12 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"ctrl+d / ctrl+u, pgdn / pgup", "half page"},
 		{"g / G", "top / bottom"},
 		{"] / [", "next / previous file"},
-		{"} / {", "next / previous change in the file"},
+		{"J / K", "next / previous change in the file"},
 		{"n / N", "next / previous review thread"},
 		{"tab", "focus file list / diff"},
 		{"f", "toggle file list"},
+		{"t", "file list: tree / flat"},
+		{"enter, h / l, H / L", "file tree: toggle, collapse / expand, collapse / expand all"},
 		{"s", "toggle inline / side-by-side"},
 		{"F", "toggle full file view (whole file with changes in place)"},
 		{"m", "mark / unmark the file as viewed (auto-unmarked if it changes later)"},
