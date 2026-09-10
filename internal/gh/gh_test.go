@@ -2,6 +2,21 @@ package gh
 
 import "testing"
 
+func TestLineCommentIsRange(t *testing.T) {
+	if (LineComment{Line: 5, Side: "RIGHT"}).IsRange() {
+		t.Fatal("single line is not a range")
+	}
+	if (LineComment{Line: 5, Side: "RIGHT", StartLine: 5, StartSide: "RIGHT"}).IsRange() {
+		t.Fatal("same start and end is not a range")
+	}
+	if !(LineComment{Line: 5, Side: "RIGHT", StartLine: 3, StartSide: "RIGHT"}).IsRange() {
+		t.Fatal("3-5 is a range")
+	}
+	if !(LineComment{Line: 3, Side: "RIGHT", StartLine: 3, StartSide: "LEFT"}).IsRange() {
+		t.Fatal("LEFT 3 -> RIGHT 3 is a range")
+	}
+}
+
 func TestParsePRRef(t *testing.T) {
 	cases := []struct {
 		in   string

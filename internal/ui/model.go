@@ -80,6 +80,8 @@ type Model struct {
 	numW         int
 	cursor       int
 	scroll       int
+	selecting    bool // visual line selection active
+	selAnchor    int  // row index where the selection started
 	spans        map[*diff.Line][]Span
 	spanCache    map[int]map[*diff.Line][]Span
 
@@ -94,9 +96,7 @@ type Model struct {
 	ta         textarea.Model
 	inputTitle string
 	inKind     inputKind
-	inPath     string
-	inLine     int
-	inSide     string
+	inComment  gh.LineComment
 	inThread   *gh.Thread
 	inEvent    gh.ReviewEvent
 
@@ -446,7 +446,15 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "q":
+		if m.selecting {
+			m.clearSelection()
+			return m, nil
+		}
 		return m, tea.Quit
+	case "esc":
+		m.clearSelection()
+	case "V":
+		m.toggleSelection()
 	case "?":
 		m.overlay = overlayHelp
 	case "tab":
@@ -462,6 +470,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.invalidateLayout()
 	case "s":
 		m.split = !m.split
+		m.clearSelection()
 		m.rebuildRows()
 	case "R":
 		return m, m.loadAll()
@@ -533,7 +542,60 @@ func (m *Model) selectFile(i int) {
 	}
 	m.fileIdx = i
 	m.cursor, m.scroll = 0, 0
+	m.clearSelection()
 	m.rebuildRows()
+}
+
+// ---------- selection ----------
+
+func (m *Model) toggleSelection() {
+	if m.selecting {
+		m.clearSelection()
+		return
+	}
+	if len(m.rows) == 0 {
+		return
+	}
+	m.selecting = true
+	m.selAnchor = m.cursor
+}
+
+func (m *Model) clearSelection() {
+	m.selecting = false
+	m.selAnchor = 0
+}
+
+// selection returns the inclusive row range currently selected.
+func (m *Model) selection() (lo, hi int, ok bool) {
+	if !m.selecting {
+		return 0, 0, false
+	}
+	lo, hi = m.selAnchor, m.cursor
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	return lo, hi, true
+}
+
+// inSelection reports whether row i is part of the active selection.
+func (m *Model) inSelection(i int) bool {
+	lo, hi, ok := m.selection()
+	return ok && i >= lo && i <= hi
+}
+
+// selectedLineCount counts diff lines inside the selection.
+func (m *Model) selectedLineCount() int {
+	lo, hi, ok := m.selection()
+	if !ok {
+		return 0
+	}
+	n := 0
+	for i := lo; i <= hi && i < len(m.rows); i++ {
+		if _, _, isLine := m.rows[i].nums(); isLine {
+			n++
+		}
+	}
+	return n
 }
 
 func (m *Model) moveCursor(d int) {
@@ -584,6 +646,7 @@ func (m *Model) jumpThread(dir int) {
 		if found >= 0 {
 			m.fileIdx = fi
 			m.scroll = 0
+			m.clearSelection()
 			m.rebuildRows()
 			m.cursor = found
 			return
@@ -700,6 +763,7 @@ func (m *Model) closeInput() {
 	m.ta.Blur()
 	m.overlay = overlayNone
 	m.inThread = nil
+	m.clearSelection()
 }
 
 func (m *Model) currentRow() *row {
@@ -713,17 +777,35 @@ func (m *Model) startComment() tea.Cmd {
 	if m.busy != "" || m.pr == nil {
 		return nil
 	}
+	f := &m.files[m.fileIdx]
+	if lo, hi, ok := m.selection(); ok {
+		start, end, startSide, side, ok := rangeAnchor(m.rows, lo, hi)
+		if !ok {
+			return m.setStatus("Selection contains no diff lines", true)
+		}
+		m.inComment = gh.LineComment{Path: f.Path(), Line: end, Side: side, StartLine: start, StartSide: startSide}
+		if !m.inComment.IsRange() {
+			m.inComment.StartLine, m.inComment.StartSide = 0, ""
+			m.openInput(inputComment, fmt.Sprintf("New comment on %s:%d (%s)", f.Path(), end, side))
+			return nil
+		}
+		loc := fmt.Sprintf("%s:%d-%d (%s)", f.Path(), start, end, side)
+		if startSide != side {
+			loc = fmt.Sprintf("%s:%s %d → %s %d", f.Path(), startSide, start, side, end)
+		}
+		m.openInput(inputComment, "New comment on "+loc)
+		return nil
+	}
 	r := m.currentRow()
 	if r == nil {
 		return nil
 	}
 	line, side, ok := r.anchor()
 	if !ok {
-		return m.setStatus("Move the cursor onto a diff line to comment", true)
+		return m.setStatus("Move the cursor onto a diff line to comment (V to select a range)", true)
 	}
-	f := &m.files[m.fileIdx]
-	m.inPath, m.inLine, m.inSide = f.Path(), line, side
-	m.openInput(inputComment, fmt.Sprintf("New comment on %s:%d (%s)", m.inPath, line, side))
+	m.inComment = gh.LineComment{Path: f.Path(), Line: line, Side: side}
+	m.openInput(inputComment, fmt.Sprintf("New comment on %s:%d (%s)", f.Path(), line, side))
 	return nil
 }
 
@@ -771,9 +853,10 @@ func (m *Model) submitInput() tea.Cmd {
 	c, n := m.client, m.number
 	switch kind {
 	case inputComment:
-		path, line, side, sha := m.inPath, m.inLine, m.inSide, m.pr.HeadRefOid
+		lc, sha := m.inComment, m.pr.HeadRefOid
+		lc.Body = body
 		return m.action("Post comment", true, func() error {
-			return c.AddLineComment(n, sha, path, line, side, body)
+			return c.AddLineComment(n, sha, lc)
 		})
 	case inputReply:
 		if thread == nil || len(thread.Comments) == 0 {

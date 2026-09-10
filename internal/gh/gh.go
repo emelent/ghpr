@@ -229,16 +229,41 @@ func (c *Client) Comment(number int, body string) error {
 	return err
 }
 
-// AddLineComment creates a new review thread on a diff line.
-// side is "LEFT" or "RIGHT"; commitID is the PR head SHA.
-func (c *Client) AddLineComment(number int, commitID, path string, line int, side, body string) error {
-	payload, _ := json.Marshal(map[string]any{
-		"body":      body,
+// LineComment describes where a new review thread should be anchored.
+// Line/Side is the (last) line of the comment. StartLine/StartSide, when
+// StartLine > 0, make it a multi-line comment spanning StartLine..Line.
+type LineComment struct {
+	Path      string
+	Line      int
+	Side      string // "LEFT" or "RIGHT"
+	StartLine int
+	StartSide string
+	Body      string
+}
+
+// IsRange reports whether the comment spans more than one line.
+func (lc LineComment) IsRange() bool {
+	return lc.StartLine > 0 && (lc.StartLine != lc.Line || lc.StartSide != lc.Side)
+}
+
+// AddLineComment creates a new review thread on a diff line or line range.
+// commitID is the PR head SHA.
+func (c *Client) AddLineComment(number int, commitID string, lc LineComment) error {
+	fields := map[string]any{
+		"body":      lc.Body,
 		"commit_id": commitID,
-		"path":      path,
-		"line":      line,
-		"side":      side,
-	})
+		"path":      lc.Path,
+		"line":      lc.Line,
+		"side":      lc.Side,
+	}
+	if lc.IsRange() {
+		fields["start_line"] = lc.StartLine
+		fields["start_side"] = lc.StartSide
+		if fields["start_side"] == "" {
+			fields["start_side"] = lc.Side
+		}
+	}
+	payload, _ := json.Marshal(fields)
 	endpoint := fmt.Sprintf("repos/%s/pulls/%d/comments", c.Repo, number)
 	_, err := run(payload, "api", "-X", "POST", endpoint, "--input", "-")
 	return err

@@ -11,7 +11,7 @@ reuses your existing `gh` login and works with any host `gh` is configured for.
 - Syntax-highlighted diffs (via chroma), inline or side-by-side with a single-key toggle
 - File list with per-file change counts and open/resolved thread badges
 - Review threads rendered inline under the lines they belong to
-- Create line comments, reply to threads, resolve/unresolve threads
+- Create single-line and multi-line comments, reply to threads, resolve/unresolve threads
 - Submit reviews: approve, request changes, or comment
 - Post general PR comments
 - Spinner-based loaders for every fetch and action, with success/error feedback
@@ -91,7 +91,8 @@ Press `?` inside the app for this list.
 
 | Key | Action |
 | --- | --- |
-| `c` | Comment on the line under the cursor |
+| `c` | Comment on the line under the cursor, or on the selected range |
+| `V` | Start selecting lines; move with `j`/`k`, then `c` to comment on the range, `esc` to cancel |
 | `r` | Reply to the thread under the cursor |
 | `x` | Resolve / unresolve the thread under the cursor |
 | `v` | Submit a review, then `a` approve, `r` request changes, `c` comment |

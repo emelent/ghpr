@@ -51,6 +51,66 @@ func (r *row) anchor() (line int, side string, ok bool) {
 	return 0, "", false
 }
 
+// nums returns the old/new line numbers a row covers (0 when absent).
+// ok is false for rows that are not diff lines.
+func (r *row) nums() (oldNum, newNum int, ok bool) {
+	switch r.kind {
+	case rowLine:
+		return r.line.OldNum, r.line.NewNum, true
+	case rowSplit:
+		if r.left != nil {
+			oldNum = r.left.OldNum
+		}
+		if r.right != nil {
+			newNum = r.right.NewNum
+		}
+		return oldNum, newNum, r.left != nil || r.right != nil
+	}
+	return 0, 0, false
+}
+
+// rangeAnchor resolves a selection of rows [lo, hi] into a comment anchor.
+// It prefers keeping the whole range on one side of the diff; when the
+// selection mixes removed and added lines each end uses its own side.
+func rangeAnchor(rows []row, lo, hi int) (start, end int, startSide, side string, ok bool) {
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	var lineRows []*row
+	allNew, allOld := true, true
+	for i := lo; i <= hi && i < len(rows); i++ {
+		r := &rows[i]
+		o, n, isLine := r.nums()
+		if !isLine {
+			continue
+		}
+		lineRows = append(lineRows, r)
+		if n == 0 {
+			allNew = false
+		}
+		if o == 0 {
+			allOld = false
+		}
+	}
+	if len(lineRows) == 0 {
+		return 0, 0, "", "", false
+	}
+	first, last := lineRows[0], lineRows[len(lineRows)-1]
+	switch {
+	case allNew:
+		_, s, _ := first.nums()
+		_, e, _ := last.nums()
+		return s, e, "RIGHT", "RIGHT", true
+	case allOld:
+		s, _, _ := first.nums()
+		e, _, _ := last.nums()
+		return s, e, "LEFT", "LEFT", true
+	}
+	s, ss, _ := first.anchor()
+	e, es, _ := last.anchor()
+	return s, e, ss, es, true
+}
+
 type anchorKey struct {
 	side string
 	line int

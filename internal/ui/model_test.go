@@ -160,7 +160,7 @@ func TestInputFlow(t *testing.T) {
 	m := newTestModel(t)
 	m.cursor = 5 // add line -> RIGHT 3
 	m.handleKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
-	if m.overlay != overlayInput || m.inSide != "RIGHT" || m.inLine != 3 || m.inPath != "main.go" {
+	if m.overlay != overlayInput || m.inComment.Side != "RIGHT" || m.inComment.Line != 3 || m.inComment.Path != "main.go" {
 		t.Fatalf("comment input not opened: %+v", m.overlay)
 	}
 	out := lines(m.View().Content)
@@ -233,6 +233,77 @@ func TestScrollFollowsCursor(t *testing.T) {
 	m.View()
 	if m.scroll != 0 {
 		t.Fatalf("expected scroll back to top")
+	}
+}
+
+func TestRangeSelectionComment(t *testing.T) {
+	m := newTestModel(t)
+	// rows: 0 hunk, 1 ctx(1), 2 ctx(2), 3 del(old 3), 4 thread, 5 add(new 3), 6 add(new 4), 7 thread, 8 add(new 5) ...
+	m.cursor = 5
+	m.handleKey(tea.KeyPressMsg{Code: 'V', Text: "V"})
+	if !m.selecting || m.selAnchor != 5 {
+		t.Fatalf("selection not started")
+	}
+	m.handleKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m.handleKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m.handleKey(tea.KeyPressMsg{Code: 'j', Text: "j"}) // now on row 8; row 7 is a thread and is skipped
+	if got := m.selectedLineCount(); got != 3 {
+		t.Fatalf("selected lines = %d, want 3", got)
+	}
+	if !m.inSelection(6) || m.inSelection(4) {
+		t.Fatalf("inSelection wrong")
+	}
+	plain := ansi.Strip(m.View().Content)
+	if !strings.Contains(plain, "3 line(s) selected") {
+		t.Fatalf("status bar should show selection:\n%s", plain)
+	}
+	m.handleKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	lc := m.inComment
+	if m.overlay != overlayInput || lc.StartLine != 3 || lc.Line != 5 || lc.Side != "RIGHT" || lc.StartSide != "RIGHT" || !lc.IsRange() {
+		t.Fatalf("range comment anchor wrong: %+v", lc)
+	}
+	if !strings.Contains(ansi.Strip(m.View().Content), "main.go:3-5 (RIGHT)") {
+		t.Fatalf("title should show the range")
+	}
+	if !m.selecting {
+		t.Fatalf("selection should stay highlighted while typing")
+	}
+	m.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.selecting {
+		t.Fatalf("cancel should clear the selection")
+	}
+
+	// Mixed deletion + addition: each end keeps its own side.
+	m.cursor = 3
+	m.toggleSelection()
+	m.cursor = 5
+	start, end, ss, es, ok := rangeAnchor(m.rows, m.selAnchor, m.cursor)
+	if !ok || start != 3 || ss != "LEFT" || end != 3 || es != "RIGHT" {
+		t.Fatalf("mixed range: %d %s -> %d %s ok=%v", start, ss, end, es, ok)
+	}
+	// Selecting upwards works the same as downwards.
+	m.clearSelection()
+	m.cursor = 6
+	m.toggleSelection()
+	m.cursor = 5
+	start, end, _, _, _ = rangeAnchor(m.rows, m.selAnchor, m.cursor)
+	if start != 3 || end != 4 {
+		t.Fatalf("upward range: %d-%d", start, end)
+	}
+	// A single-line selection degrades to a plain comment.
+	m.clearSelection()
+	m.cursor = 5
+	m.toggleSelection()
+	m.handleKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	if m.inComment.IsRange() || m.inComment.Line != 3 {
+		t.Fatalf("single-line selection should not be a range: %+v", m.inComment)
+	}
+	m.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	// Switching file clears any selection.
+	m.toggleSelection()
+	m.selectFile(1)
+	if m.selecting {
+		t.Fatalf("file switch should clear selection")
 	}
 }
 

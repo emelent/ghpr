@@ -12,22 +12,40 @@ import (
 	"ghpr/internal/gh"
 )
 
-// lineBg returns the background for a diff line kind.
-func lineBg(k diff.Kind, selected bool) color.Color {
+// rowState describes how a row is highlighted.
+type rowState int
+
+const (
+	stNormal rowState = iota
+	stRange           // inside the visual selection
+	stCursor          // under the cursor
+)
+
+// lineBg returns the background for a diff line kind in a given state.
+func lineBg(k diff.Kind, st rowState) color.Color {
 	switch k {
 	case diff.Add:
-		if selected {
+		switch st {
+		case stCursor:
 			return colAddCurBg
+		case stRange:
+			return colAddSelBg
 		}
 		return colAddBg
 	case diff.Del:
-		if selected {
+		switch st {
+		case stCursor:
 			return colDelCurBg
+		case stRange:
+			return colDelSelBg
 		}
 		return colDelBg
 	}
-	if selected {
+	switch st {
+	case stCursor:
 		return colCtxCurBg
+	case stRange:
+		return colCtxSelBg
 	}
 	return lipgloss.NoColor{}
 }
@@ -50,8 +68,8 @@ func numStr(n, w int) string {
 }
 
 // renderUnified renders "old new ± content" for one line.
-func (m *Model) renderUnified(l *diff.Line, selected bool, width, numW int) string {
-	bg := lineBg(l.Kind, selected)
+func (m *Model) renderUnified(l *diff.Line, st rowState, width, numW int) string {
+	bg := lineBg(l.Kind, st)
 	sign, signFg := signOf(l.Kind)
 	gut := lipgloss.NewStyle().Background(bg).Foreground(colNumFg).Render(
 		numStr(l.OldNum, numW) + " " + numStr(l.NewNum, numW) + " ")
@@ -62,15 +80,12 @@ func (m *Model) renderUnified(l *diff.Line, selected bool, width, numW int) stri
 }
 
 // renderHalf renders "num ± content" for one side of a split row.
-func (m *Model) renderHalf(l *diff.Line, selected bool, width, numW int) string {
+func (m *Model) renderHalf(l *diff.Line, st rowState, width, numW int) string {
 	if l == nil {
-		bg := color.Color(lipgloss.NoColor{})
-		if selected {
-			bg = colCtxCurBg
-		}
+		bg := lineBg(diff.Context, st)
 		return lipgloss.NewStyle().Background(bg).Render(strings.Repeat(" ", width))
 	}
-	bg := lineBg(l.Kind, selected)
+	bg := lineBg(l.Kind, st)
 	sign, signFg := signOf(l.Kind)
 	n := l.NewNum
 	if l.Kind == diff.Del {
@@ -114,6 +129,9 @@ func renderThread(t *gh.Thread, selected bool, width int) []string {
 	loc := ""
 	if t.Line > 0 {
 		loc = fmt.Sprintf("%s:%d", t.DiffSide, t.Line)
+		if t.StartLine > 0 && t.StartLine != t.Line {
+			loc = fmt.Sprintf("%s:%d-%d", t.DiffSide, t.StartLine, t.Line)
+		}
 	} else if t.OriginalLine > 0 {
 		loc = fmt.Sprintf("orig %d", t.OriginalLine)
 	}
@@ -144,7 +162,8 @@ func renderThread(t *gh.Thread, selected bool, width int) []string {
 }
 
 // renderRow renders a row to one or more full-width lines.
-func (m *Model) renderRow(r *row, selected bool, width, numW int) []string {
+func (m *Model) renderRow(r *row, st rowState, width, numW int) []string {
+	selected := st == stCursor
 	switch r.kind {
 	case rowHunk:
 		st := styHunk
@@ -159,15 +178,15 @@ func (m *Model) renderRow(r *row, selected bool, width, numW int) []string {
 		}
 		return []string{padRight(s, width)}
 	case rowLine:
-		return []string{m.renderUnified(r.line, selected, width, numW)}
+		return []string{m.renderUnified(r.line, st, width, numW)}
 	case rowSplit:
 		lw := (width - 1) / 2
 		rw := width - 1 - lw
 		sep := styBorder.Render("│")
-		if selected {
-			sep = lipgloss.NewStyle().Foreground(colBorder).Background(colCtxCurBg).Render("│")
+		if st != stNormal {
+			sep = lipgloss.NewStyle().Foreground(colBorder).Background(lineBg(diff.Context, st)).Render("│")
 		}
-		return []string{m.renderHalf(r.left, selected, lw, numW) + sep + m.renderHalf(r.right, selected, rw, numW)}
+		return []string{m.renderHalf(r.left, st, lw, numW) + sep + m.renderHalf(r.right, st, rw, numW)}
 	case rowThread:
 		return renderThread(r.thread, selected, width)
 	}
@@ -302,7 +321,14 @@ func (m *Model) renderDiff(width, height int) []string {
 	numW := m.numW
 	y := 0
 	for i := start; i < len(m.rows) && y < avail; i++ {
-		rendered := m.renderRow(&m.rows[i], i == m.cursor, width, numW)
+		st := stNormal
+		switch {
+		case i == m.cursor:
+			st = stCursor
+		case m.inSelection(i):
+			st = stRange
+		}
+		rendered := m.renderRow(&m.rows[i], st, width, numW)
 		skip := 0
 		if m.rowStart[i] < m.scroll {
 			skip = m.scroll - m.rowStart[i]
@@ -371,6 +397,11 @@ func (m *Model) renderStatus(width int) string {
 		left = styBar.Render(" Submit review: ") + styBarKey.Render("a") + styBar.Render(" approve  ") +
 			styBarKey.Render("r") + styBar.Render(" request changes  ") + styBarKey.Render("c") + styBar.Render(" comment  ") +
 			styBarKey.Render("esc") + styBar.Render(" cancel")
+	case m.selecting && m.overlay == overlayNone:
+		left = styBar.Render(fmt.Sprintf(" %d line(s) selected  ", m.selectedLineCount())) +
+			styBarKey.Render("j/k") + styBar.Render(" extend  ") +
+			styBarKey.Render("c") + styBar.Render(" comment  ") +
+			styBarKey.Render("esc") + styBar.Render(" cancel")
 	case m.status != "":
 		if m.statusErr {
 			left = lipgloss.NewStyle().Background(colBarBg).Foreground(colErr).Render(" ✗ " + m.status)
@@ -384,7 +415,7 @@ func (m *Model) renderStatus(width int) string {
 	if m.overlay == overlayInput {
 		right = styBarKey.Render("⌘+enter") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
 	} else {
-		hints := []struct{ k, v string }{{"j/k", "move"}, {"s", "split"}, {"c", "comment"}, {"r", "reply"}, {"x", "resolve"}, {"v", "review"}, {"?", "help"}}
+		hints := []struct{ k, v string }{{"j/k", "move"}, {"s", "split"}, {"V", "select"}, {"c", "comment"}, {"r", "reply"}, {"x", "resolve"}, {"v", "review"}, {"?", "help"}}
 		var sb strings.Builder
 		for _, h := range hints {
 			sb.WriteString(styBarKey.Render(h.k) + styBarDim.Render(" "+h.v+"  "))
@@ -427,7 +458,8 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"tab", "focus file list / diff"},
 		{"f", "toggle file list"},
 		{"s", "toggle inline / side-by-side"},
-		{"c", "comment on the current line"},
+		{"c", "comment on the current line (or selection)"},
+		{"V", "start / stop selecting lines for a multi-line comment"},
 		{"r", "reply to the thread under the cursor"},
 		{"x", "resolve / unresolve the thread under the cursor"},
 		{"v", "submit a review (approve / request changes / comment)"},
