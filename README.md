@@ -9,6 +9,7 @@ reuses your existing `gh` login and works with any host `gh` is configured for.
 ## Features
 
 - Syntax-highlighted diffs (via chroma), inline or side-by-side with a single-key toggle
+- Full-file view that shows the whole file with the changes in place, and next/previous change navigation
 - File list with per-file change counts and open/resolved thread badges
 - Review threads rendered inline under the lines they belong to
 - Create single-line and multi-line comments, reply to threads, resolve/unresolve threads
@@ -89,10 +90,12 @@ Press `?` inside the app for this list.
 | `ctrl+d` / `ctrl+u`, `pgdn` / `pgup`, `space` | Half page down / up |
 | `g` / `G` | Top / bottom of file |
 | `]` / `[`, `l` / `h` | Next / previous file |
+| `}` / `{` | Next / previous change in the file |
 | `n` / `N` | Next / previous review thread (crosses files) |
 | `tab` | Switch focus between file list and diff |
 | `f` | Show / hide the file list |
 | `s` | Toggle inline / side-by-side diff |
+| `F` | Toggle full-file view. Fetches the file at the PR head and shows every line with the hunks in place. Comments are still limited to lines that are part of the diff, as GitHub requires |
 
 ### Reviewing
 

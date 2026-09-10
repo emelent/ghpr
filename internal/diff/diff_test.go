@@ -1,6 +1,10 @@
 package diff
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 const sample = `diff --git a/main.go b/main.go
 index 1111111..2222222 100644
@@ -94,5 +98,78 @@ func TestSideBySide(t *testing.T) {
 	}
 	if rows[0].Left != rows[0].Right {
 		t.Fatalf("context row should share the line")
+	}
+}
+
+const expandSample = `diff --git a/f.txt b/f.txt
+--- a/f.txt
++++ b/f.txt
+@@ -2,3 +2,4 @@
+ b
+-c
++C
++C2
+ d
+@@ -7,0 +9,2 @@
++X
++Y
+@@ -10,2 +12,0 @@
+-j
+-k
+`
+
+func TestExpand(t *testing.T) {
+	files := Parse(expandSample)
+	if len(files) != 1 {
+		t.Fatalf("files %d", len(files))
+	}
+	// new file: a b C C2 d e f g X Y h i (12 lines); old: a b c d e f g h i j k (11 lines)
+	content := "a\nb\nC\nC2\nd\ne\nf\ng\nX\nY\nh\ni\n"
+	full := Expand(&files[0], content)
+	if !full.Full || len(full.Hunks) != 1 {
+		t.Fatalf("expected one full hunk")
+	}
+	var got []string
+	for _, l := range full.Hunks[0].Lines {
+		sign := " "
+		switch l.Kind {
+		case Add:
+			sign = "+"
+		case Del:
+			sign = "-"
+		}
+		got = append(got, fmt.Sprintf("%s%d/%d:%s", sign, l.OldNum, l.NewNum, l.Text))
+	}
+	want := []string{
+		" 1/1:a", " 2/2:b", "-3/0:c", "+0/3:C", "+0/4:C2", " 4/5:d", " 5/6:e", " 6/7:f", " 7/8:g",
+		"+0/9:X", "+0/10:Y", " 8/11:h", " 9/12:i", "-10/0:j", "-11/0:k",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("expand mismatch\n got %v\nwant %v", got, want)
+	}
+	h := full.Hunks[0]
+	if h.NewCount != 12 || h.OldCount != 11 {
+		t.Fatalf("counts old=%d new=%d", h.OldCount, h.NewCount)
+	}
+	// Empty content still lists the hunks.
+	if e := Expand(&files[0], ""); len(e.Hunks[0].Lines) == 0 {
+		t.Fatalf("empty content should still contain hunk lines")
+	}
+}
+
+func TestInDiff(t *testing.T) {
+	f := Parse(expandSample)[0]
+	cases := []struct {
+		side string
+		n    int
+		want bool
+	}{
+		{"RIGHT", 3, true}, {"RIGHT", 2, true}, {"RIGHT", 6, false}, {"RIGHT", 9, true},
+		{"LEFT", 3, true}, {"LEFT", 10, true}, {"LEFT", 6, false}, {"LEFT", 0, false},
+	}
+	for _, c := range cases {
+		if got := f.InDiff(c.side, c.n); got != c.want {
+			t.Errorf("InDiff(%s,%d)=%v want %v", c.side, c.n, got, c.want)
+		}
 	}
 }

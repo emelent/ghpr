@@ -168,7 +168,9 @@ func buildRows(f *diff.File, split bool, threads []gh.Thread) []row {
 
 	for hi := range f.Hunks {
 		h := &f.Hunks[hi]
-		rows = append(rows, row{kind: rowHunk, hunk: h})
+		if !f.Full {
+			rows = append(rows, row{kind: rowHunk, hunk: h})
+		}
 		if split {
 			for _, p := range diff.SideBySide(h) {
 				rows = append(rows, row{kind: rowSplit, left: p.Left, right: p.Right})

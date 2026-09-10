@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -188,6 +189,21 @@ func (c *Client) ViewPR(number int) (*PR, error) {
 func (c *Client) Diff(number int) (string, error) {
 	args := append([]string{"pr", "diff", strconv.Itoa(number)}, c.repoArgs()...)
 	out, err := run(nil, args...)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// FileContent fetches the raw content of a file at a given ref (branch or
+// commit SHA).
+func (c *Client) FileContent(ref, path string) (string, error) {
+	segs := strings.Split(path, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	endpoint := fmt.Sprintf("repos/%s/contents/%s?ref=%s", c.Repo, strings.Join(segs, "/"), url.QueryEscape(ref))
+	out, err := run(nil, "api", "-H", "Accept: application/vnd.github.raw+json", endpoint)
 	if err != nil {
 		return "", err
 	}

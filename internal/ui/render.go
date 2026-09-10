@@ -297,6 +297,14 @@ func (m *Model) renderDiff(width, height int) []string {
 		if m.split {
 			mode = "side-by-side"
 		}
+		switch {
+		case m.showingFull():
+			mode += " · full file"
+		case m.full && m.fullPending[m.fileIdx]:
+			mode += " · loading full file…"
+		case m.full:
+			mode += " · hunks only"
+		}
 		hdr := styTitle.Render(" "+f.Path()) + styDim.Render(fmt.Sprintf("  %s · %s", f.Status, mode))
 		if f.Status == diff.Renamed {
 			hdr = styTitle.Render(" "+f.OldPath+" → "+f.NewPath) + styDim.Render(fmt.Sprintf("  renamed · %s", mode))
@@ -415,7 +423,7 @@ func (m *Model) renderStatus(width int) string {
 	if m.overlay == overlayInput {
 		right = styBarKey.Render("⌘+enter") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
 	} else {
-		hints := []struct{ k, v string }{{"j/k", "move"}, {"s", "split"}, {"V", "select"}, {"c", "comment"}, {"r", "reply"}, {"x", "resolve"}, {"v", "review"}, {"?", "help"}}
+		hints := []struct{ k, v string }{{"j/k", "move"}, {"}/{", "change"}, {"s", "split"}, {"F", "full"}, {"V", "select"}, {"c", "comment"}, {"r", "reply"}, {"x", "resolve"}, {"v", "review"}, {"?", "help"}}
 		var sb strings.Builder
 		for _, h := range hints {
 			sb.WriteString(styBarKey.Render(h.k) + styBarDim.Render(" "+h.v+"  "))
@@ -454,10 +462,12 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"ctrl+d / ctrl+u, pgdn / pgup", "half page"},
 		{"g / G", "top / bottom"},
 		{"] / [", "next / previous file"},
+		{"} / {", "next / previous change in the file"},
 		{"n / N", "next / previous review thread"},
 		{"tab", "focus file list / diff"},
 		{"f", "toggle file list"},
 		{"s", "toggle inline / side-by-side"},
+		{"F", "toggle full file view (whole file with changes in place)"},
 		{"c", "comment on the current line (or selection)"},
 		{"V", "start / stop selecting lines for a multi-line comment"},
 		{"r", "reply to the thread under the cursor"},

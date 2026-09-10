@@ -85,6 +85,13 @@ type Model struct {
 	spans        map[*diff.Line][]Span
 	spanCache    map[int]map[*diff.Line][]Span
 
+	// full-file view
+	full        bool               // show whole files instead of hunks
+	fullFiles   map[int]*diff.File // expanded files by index
+	fullSpans   map[int]map[*diff.Line][]Span
+	fullPending map[int]bool // fetches in flight
+	fullFailed  map[int]bool // fetch failed; fall back to hunks
+
 	// async / status
 	spinner   spinner.Model
 	busy      string
@@ -124,14 +131,18 @@ func New(client *gh.Client, number int, syntax string) *Model {
 	ta.SetStyles(tas)
 
 	m := &Model{
-		client:    client,
-		number:    number,
-		hl:        NewHighlighter(syntax),
-		spinner:   sp,
-		ta:        ta,
-		showFiles: true,
-		threadH:   map[int]int{},
-		spanCache: map[int]map[*diff.Line][]Span{},
+		client:      client,
+		number:      number,
+		hl:          NewHighlighter(syntax),
+		spinner:     sp,
+		ta:          ta,
+		showFiles:   true,
+		threadH:     map[int]int{},
+		spanCache:   map[int]map[*diff.Line][]Span{},
+		fullFiles:   map[int]*diff.File{},
+		fullSpans:   map[int]map[*diff.Line][]Span{},
+		fullPending: map[int]bool{},
+		fullFailed:  map[int]bool{},
 	}
 	d := list.NewDefaultDelegate()
 	d.Styles.SelectedTitle = d.Styles.SelectedTitle.Foreground(colAccent).BorderForeground(colAccent)
@@ -166,6 +177,12 @@ type diffMsg struct {
 type threadsMsg struct {
 	threads []gh.Thread
 	err     error
+}
+type fileContentMsg struct {
+	idx  int
+	path string
+	text string
+	err  error
 }
 type actionMsg struct {
 	label   string
@@ -229,6 +246,31 @@ func (m *Model) fetchThreads() tea.Cmd {
 		th, err := c.ReviewThreads(n)
 		return threadsMsg{th, err}
 	}
+}
+
+// fullEligible reports whether a file has content beyond its hunks worth
+// fetching. Added and deleted files are already shown in full by the diff.
+func fullEligible(f *diff.File) bool {
+	return !f.IsBinary && f.Status != diff.Deleted && f.Status != diff.Added && len(f.Hunks) > 0
+}
+
+// ensureFull starts fetching the current file's full content when the full
+// view is on and it is not loaded yet.
+func (m *Model) ensureFull() tea.Cmd {
+	if !m.full || m.pr == nil || len(m.files) == 0 {
+		return nil
+	}
+	idx := m.fileIdx
+	f := &m.files[idx]
+	if !fullEligible(f) || m.fullFiles[idx] != nil || m.fullPending[idx] || m.fullFailed[idx] {
+		return nil
+	}
+	m.fullPending[idx] = true
+	c, ref, path := m.client, m.pr.HeadRefOid, f.Path()
+	return tea.Batch(m.setBusy("Loading full file…"), func() tea.Msg {
+		text, err := c.FileContent(ref, path)
+		return fileContentMsg{idx: idx, path: path, text: text, err: err}
+	})
 }
 
 func (m *Model) setBusy(msg string) tea.Cmd {
@@ -332,9 +374,31 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.files = msg.files
 		m.spanCache = map[int]map[*diff.Line][]Span{}
+		m.fullFiles = map[int]*diff.File{}
+		m.fullSpans = map[int]map[*diff.Line][]Span{}
+		m.fullPending = map[int]bool{}
+		m.fullFailed = map[int]bool{}
 		m.fileIdx = 0
 		m.cursor, m.scroll = 0, 0
 		m.rebuildRows()
+		return m, m.ensureFull()
+
+	case fileContentMsg:
+		delete(m.fullPending, msg.idx)
+		if len(m.fullPending) == 0 && m.pending == 0 {
+			m.busy = ""
+		}
+		if msg.idx >= len(m.files) || m.files[msg.idx].Path() != msg.path {
+			return m, nil // stale: diff was reloaded meanwhile
+		}
+		if msg.err != nil {
+			m.fullFailed[msg.idx] = true
+			return m, m.setStatus("Full file unavailable: "+msg.err.Error(), true)
+		}
+		m.fullFiles[msg.idx] = diff.Expand(&m.files[msg.idx], msg.text)
+		if msg.idx == m.fileIdx {
+			m.rebuildRowsKeepLine()
+		}
 		return m, nil
 
 	case threadsMsg:
@@ -473,7 +537,16 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "s":
 		m.split = !m.split
 		m.clearSelection()
-		m.rebuildRows()
+		m.rebuildRowsKeepLine()
+	case "F":
+		m.full = !m.full
+		m.clearSelection()
+		m.rebuildRowsKeepLine()
+		return m, m.ensureFull()
+	case "}":
+		m.jumpChange(1)
+	case "{":
+		m.jumpChange(-1)
 	case "R":
 		return m, m.loadAll()
 	case "o":
@@ -486,16 +559,14 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.openInput(inputPRComment, fmt.Sprintf("Comment on PR #%d", m.number))
 	case "j", "down":
 		if m.filesFocused {
-			m.selectFile(m.fileIdx + 1)
-		} else {
-			m.moveCursor(1)
+			return m, m.selectFile(m.fileIdx + 1)
 		}
+		m.moveCursor(1)
 	case "k", "up":
 		if m.filesFocused {
-			m.selectFile(m.fileIdx - 1)
-		} else {
-			m.moveCursor(-1)
+			return m, m.selectFile(m.fileIdx - 1)
 		}
+		m.moveCursor(-1)
 	case "enter":
 		if m.filesFocused {
 			m.filesFocused = false
@@ -510,13 +581,13 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "G", "end":
 		m.cursor = max(0, len(m.rows)-1)
 	case "]", "l", "right":
-		m.selectFile(m.fileIdx + 1)
+		return m, m.selectFile(m.fileIdx + 1)
 	case "[", "h", "left":
-		m.selectFile(m.fileIdx - 1)
+		return m, m.selectFile(m.fileIdx - 1)
 	case "n":
-		m.jumpThread(1)
+		return m, m.jumpThread(1)
 	case "N":
-		m.jumpThread(-1)
+		return m, m.jumpThread(-1)
 	case "c":
 		return m, m.startComment()
 	case "r":
@@ -529,9 +600,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // ---------- navigation ----------
 
-func (m *Model) selectFile(i int) {
+func (m *Model) selectFile(i int) tea.Cmd {
 	if len(m.files) == 0 {
-		return
+		return nil
 	}
 	if i < 0 {
 		i = 0
@@ -540,12 +611,69 @@ func (m *Model) selectFile(i int) {
 		i = len(m.files) - 1
 	}
 	if i == m.fileIdx {
-		return
+		return nil
 	}
 	m.fileIdx = i
 	m.cursor, m.scroll = 0, 0
 	m.clearSelection()
 	m.rebuildRows()
+	return m.ensureFull()
+}
+
+// rowChanged reports whether row i shows an added or removed line.
+func (m *Model) rowChanged(i int) bool {
+	if i < 0 || i >= len(m.rows) {
+		return false
+	}
+	r := &m.rows[i]
+	switch r.kind {
+	case rowLine:
+		return r.line.Kind != diff.Context
+	case rowSplit:
+		return (r.left != nil && r.left.Kind != diff.Context) || (r.right != nil && r.right.Kind != diff.Context)
+	}
+	return false
+}
+
+// jumpChange moves the cursor to the start of the next (dir > 0) or previous
+// (dir < 0) block of contiguous changed lines in the current file.
+func (m *Model) jumpChange(dir int) {
+	n := len(m.rows)
+	if n == 0 {
+		return
+	}
+	if dir > 0 {
+		i := m.cursor
+		for i < n && m.rowChanged(i) {
+			i++ // leave the block we are in
+		}
+		for i < n && !m.rowChanged(i) {
+			i++
+		}
+		if i < n {
+			m.cursor = i
+		}
+		return
+	}
+	i := m.cursor
+	if m.rowChanged(i) && m.rowChanged(i-1) {
+		for i > 0 && m.rowChanged(i-1) {
+			i-- // inside a block: go to its start
+		}
+		m.cursor = i
+		return
+	}
+	i--
+	for i >= 0 && !m.rowChanged(i) {
+		i--
+	}
+	if i < 0 {
+		return
+	}
+	for i > 0 && m.rowChanged(i-1) {
+		i--
+	}
+	m.cursor = i
 }
 
 // ---------- selection ----------
@@ -615,45 +743,47 @@ func (m *Model) moveCursor(d int) {
 
 // jumpThread moves the cursor to the next/previous thread row, crossing
 // file boundaries and wrapping around.
-func (m *Model) jumpThread(dir int) {
+func (m *Model) jumpThread(dir int) tea.Cmd {
 	if len(m.files) == 0 {
-		return
+		return nil
 	}
 	// Current file first.
 	for i := m.cursor + dir; i >= 0 && i < len(m.rows); i += dir {
 		if m.rows[i].kind == rowThread {
 			m.cursor = i
-			return
+			return nil
 		}
+	}
+	hasThread := func(path string) bool {
+		for _, t := range m.threads {
+			if t.Path == path {
+				return true
+			}
+		}
+		return false
 	}
 	for step := 1; step <= len(m.files); step++ {
 		fi := ((m.fileIdx+dir*step)%len(m.files) + len(m.files)) % len(m.files)
-		rows := buildRows(&m.files[fi], m.split, m.threads)
-		var found = -1
-		if dir > 0 {
-			for i := range rows {
-				if rows[i].kind == rowThread {
-					found = i
-					break
-				}
-			}
-		} else {
-			for i := len(rows) - 1; i >= 0; i-- {
-				if rows[i].kind == rowThread {
-					found = i
-					break
-				}
+		if !hasThread(m.files[fi].Path()) {
+			continue
+		}
+		m.fileIdx = fi
+		m.scroll = 0
+		m.clearSelection()
+		m.rebuildRows()
+		m.cursor = 0
+		if dir < 0 {
+			m.cursor = len(m.rows) - 1
+		}
+		for i := m.cursor; i >= 0 && i < len(m.rows); i += dir {
+			if m.rows[i].kind == rowThread {
+				m.cursor = i
+				break
 			}
 		}
-		if found >= 0 {
-			m.fileIdx = fi
-			m.scroll = 0
-			m.clearSelection()
-			m.rebuildRows()
-			m.cursor = found
-			return
-		}
+		return m.ensureFull()
 	}
+	return nil
 }
 
 // ---------- layout ----------
@@ -699,12 +829,16 @@ func (m *Model) rebuildRows() {
 		m.rowStart = nil
 		return
 	}
-	f := &m.files[m.fileIdx]
-	if sp, ok := m.spanCache[m.fileIdx]; ok {
+	f := m.viewFile()
+	cache := m.spanCache
+	if f.Full {
+		cache = m.fullSpans
+	}
+	if sp, ok := cache[m.fileIdx]; ok {
 		m.spans = sp
 	} else {
 		m.spans = m.hl.HighlightFile(f)
-		m.spanCache[m.fileIdx] = m.spans
+		cache[m.fileIdx] = m.spans
 	}
 	m.rows = buildRows(f, m.split, m.threads)
 	maxNum := 1
@@ -717,6 +851,53 @@ func (m *Model) rebuildRows() {
 		m.cursor = max(0, len(m.rows)-1)
 	}
 	m.invalidateLayout()
+}
+
+// viewFile returns the file to render: the expanded version when the full
+// view is on and loaded, otherwise the diff hunks.
+func (m *Model) viewFile() *diff.File {
+	if m.full {
+		if ff := m.fullFiles[m.fileIdx]; ff != nil {
+			return ff
+		}
+	}
+	return &m.files[m.fileIdx]
+}
+
+// showingFull reports whether the current file is rendered in full.
+func (m *Model) showingFull() bool {
+	return len(m.files) > 0 && m.viewFile().Full
+}
+
+// rebuildRowsKeepLine rebuilds rows and moves the cursor to the row showing
+// the same line (or thread) it was on before, so toggling layouts does not
+// lose the reader's place.
+func (m *Model) rebuildRowsKeepLine() {
+	var threadID string
+	oldNum, newNum := 0, 0
+	if r := m.currentRow(); r != nil {
+		if r.kind == rowThread {
+			threadID = r.thread.ID
+		} else {
+			oldNum, newNum, _ = r.nums()
+		}
+	}
+	m.rebuildRows()
+	for i := range m.rows {
+		r := &m.rows[i]
+		if threadID != "" {
+			if r.kind == rowThread && r.thread.ID == threadID {
+				m.cursor = i
+				return
+			}
+			continue
+		}
+		o, n, ok := r.nums()
+		if ok && (newNum > 0 && n == newNum || newNum == 0 && oldNum > 0 && o == oldNum) {
+			m.cursor = i
+			return
+		}
+	}
 }
 
 func (m *Model) computeOffsets() {
@@ -785,6 +966,9 @@ func (m *Model) startComment() tea.Cmd {
 		if !ok {
 			return m.setStatus("Selection contains no diff lines", true)
 		}
+		if !f.InDiff(startSide, start) || !f.InDiff(side, end) {
+			return m.setStatus("GitHub only accepts comments on lines that are part of the diff", true)
+		}
 		m.inComment = gh.LineComment{Path: f.Path(), Line: end, Side: side, StartLine: start, StartSide: startSide}
 		if !m.inComment.IsRange() {
 			m.inComment.StartLine, m.inComment.StartSide = 0, ""
@@ -805,6 +989,9 @@ func (m *Model) startComment() tea.Cmd {
 	line, side, ok := r.anchor()
 	if !ok {
 		return m.setStatus("Move the cursor onto a diff line to comment (V to select a range)", true)
+	}
+	if !f.InDiff(side, line) {
+		return m.setStatus("GitHub only accepts comments on lines that are part of the diff", true)
 	}
 	m.inComment = gh.LineComment{Path: f.Path(), Line: line, Side: side}
 	m.openInput(inputComment, fmt.Sprintf("New comment on %s:%d (%s)", f.Path(), line, side))

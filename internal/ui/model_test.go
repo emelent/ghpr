@@ -344,3 +344,110 @@ func TestApplyTheme(t *testing.T) {
 		t.Fatalf("theme names: %v", got)
 	}
 }
+
+func TestJumpChange(t *testing.T) {
+	m := newTestModel(t)
+	// rows: 0 hunk, 1 ctx, 2 ctx, 3 del, 4 thread, 5 add, 6 add, 7 thread, 8 add, 9 ctx, 10 ctx, 11 ctx
+	m.cursor = 0
+	m.jumpChange(1)
+	if m.cursor != 3 {
+		t.Fatalf("first change at row 3, got %d", m.cursor)
+	}
+	m.jumpChange(1)
+	if m.cursor != 5 {
+		t.Fatalf("next block starts at row 5 (thread row splits blocks), got %d", m.cursor)
+	}
+	m.jumpChange(1)
+	if m.cursor != 8 {
+		t.Fatalf("next block at row 8, got %d", m.cursor)
+	}
+	m.jumpChange(1)
+	if m.cursor != 8 {
+		t.Fatalf("no further change: cursor stays, got %d", m.cursor)
+	}
+	m.cursor = 6 // middle of the 5-6 block
+	m.jumpChange(-1)
+	if m.cursor != 5 {
+		t.Fatalf("prev from inside a block goes to its start, got %d", m.cursor)
+	}
+	m.jumpChange(-1)
+	if m.cursor != 3 {
+		t.Fatalf("prev block at row 3, got %d", m.cursor)
+	}
+	m.jumpChange(-1)
+	if m.cursor != 3 {
+		t.Fatalf("no earlier change: cursor stays, got %d", m.cursor)
+	}
+}
+
+func TestFullFileView(t *testing.T) {
+	m := newTestModel(t)
+	if !fullEligible(&m.files[0]) {
+		t.Fatalf("modified file should be eligible")
+	}
+	m.cursor = 6 // add line new=4
+	m.handleKey(tea.KeyPressMsg{Code: 'F', Text: "F"})
+	if !m.full || !m.fullPending[0] || m.busy == "" {
+		t.Fatalf("F should request the file and show a loader: full=%v pending=%v busy=%q", m.full, m.fullPending, m.busy)
+	}
+	if !strings.Contains(ansi.Strip(m.View().Content), "loading full file") {
+		t.Fatalf("header should say loading")
+	}
+	content := "package main\n\nimport (\n\t\"fmt\"\n)\n\nfunc main() {\n\tfmt.Println(\"hi\") // multi\n\tfmt.Println(\"extra line outside the diff\")\n}\n"
+	m.Update(fileContentMsg{idx: 0, path: "main.go", text: content})
+	if !m.showingFull() || m.busy != "" {
+		t.Fatalf("full view should be active after content arrives")
+	}
+	plain := ansi.Strip(m.View().Content)
+	if !strings.Contains(plain, "full file") || !strings.Contains(plain, "extra line outside the diff") {
+		t.Fatalf("full view missing content:\n%s", plain)
+	}
+	if strings.Contains(plain, "@@ -1,6") {
+		t.Fatalf("hunk headers should be hidden in full view")
+	}
+	// Cursor stays on the same new-side line.
+	if o, n, ok := m.rows[m.cursor].nums(); !ok || n != 4 || o != 0 {
+		t.Fatalf("cursor should still be on new line 4, got old=%d new=%d ok=%v", o, n, ok)
+	}
+	// Threads still interleave under their lines.
+	if !strings.Contains(plain, "@alice") {
+		t.Fatalf("threads should render in full view")
+	}
+	// Commenting on a line outside the diff is refused.
+	for i := range m.rows {
+		if _, n, ok := m.rows[i].nums(); ok && n == 9 {
+			m.cursor = i
+		}
+	}
+	m.handleKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	if m.overlay == overlayInput || !m.statusErr {
+		t.Fatalf("comment outside diff should be refused")
+	}
+	// Toggle back keeps the line where possible.
+	m.cursor = 0
+	for i := range m.rows {
+		if _, n, ok := m.rows[i].nums(); ok && n == 5 {
+			m.cursor = i
+			break
+		}
+	}
+	m.handleKey(tea.KeyPressMsg{Code: 'F', Text: "F"})
+	if m.full || m.showingFull() {
+		t.Fatalf("F again should return to hunks")
+	}
+	if _, n, _ := m.rows[m.cursor].nums(); n != 5 {
+		t.Fatalf("cursor should remain on new line 5, got %d", n)
+	}
+	// Failed fetch falls back to hunks with an error status.
+	m.handleKey(tea.KeyPressMsg{Code: 'F', Text: "F"})
+	m.selectFile(1)
+	m.fullPending[1] = true
+	m.Update(fileContentMsg{idx: 1, path: "b.py", err: errString("boom")})
+	if m.showingFull() || !m.fullFailed[1] || !m.statusErr {
+		t.Fatalf("failed fetch should fall back")
+	}
+}
+
+type errString string
+
+func (e errString) Error() string { return string(e) }
