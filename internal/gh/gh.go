@@ -33,18 +33,24 @@ type PR struct {
 	HeadRefOid     string `json:"headRefOid"`
 	IsDraft        bool   `json:"isDraft"`
 	ReviewDecision string `json:"reviewDecision"`
-	Additions      int    `json:"additions"`
-	Deletions      int    `json:"deletions"`
-	ChangedFiles   int    `json:"changedFiles"`
-	Author         struct {
+	// Mergeable is MERGEABLE, CONFLICTING or UNKNOWN; MergeStateStatus is
+	// CLEAN, BLOCKED, BEHIND, DIRTY, UNSTABLE, HAS_HOOKS, DRAFT or UNKNOWN.
+	Mergeable        string `json:"mergeable"`
+	MergeStateStatus string `json:"mergeStateStatus"`
+	Additions        int    `json:"additions"`
+	Deletions        int    `json:"deletions"`
+	ChangedFiles     int    `json:"changedFiles"`
+	Author           struct {
 		Login string `json:"login"`
 	} `json:"author"`
+	HeadRepoOwner string `json:"-"`
 }
 
 // PRSummary is a row in a pull request listing.
 type PRSummary struct {
 	Number         int       `json:"number"`
 	Title          string    `json:"title"`
+	State          string    `json:"state"` // OPEN, CLOSED or MERGED
 	HeadRefName    string    `json:"headRefName"`
 	IsDraft        bool      `json:"isDraft"`
 	ReviewDecision string    `json:"reviewDecision"`
@@ -154,10 +160,14 @@ func (c *Client) ownerName() (string, string) {
 	return parts[0], parts[1]
 }
 
-// ListPRs returns open pull requests.
-func (c *Client) ListPRs(limit int) ([]PRSummary, error) {
-	args := append([]string{"pr", "list", "--state", "open", "--limit", strconv.Itoa(limit),
-		"--json", "number,title,author,headRefName,isDraft,reviewDecision,updatedAt"}, c.repoArgs()...)
+// ListPRs returns pull requests in the given state: "open", "closed",
+// "merged" or "all".
+func (c *Client) ListPRs(state string, limit int) ([]PRSummary, error) {
+	if state == "" {
+		state = "open"
+	}
+	args := append([]string{"pr", "list", "--state", state, "--limit", strconv.Itoa(limit),
+		"--json", "number,title,state,author,headRefName,isDraft,reviewDecision,updatedAt"}, c.repoArgs()...)
 	out, err := run(nil, args...)
 	if err != nil {
 		return nil, err
@@ -172,7 +182,7 @@ func (c *Client) ListPRs(limit int) ([]PRSummary, error) {
 // ViewPR fetches PR metadata.
 func (c *Client) ViewPR(number int) (*PR, error) {
 	args := append([]string{"pr", "view", strconv.Itoa(number),
-		"--json", "number,title,body,state,url,baseRefName,headRefName,headRefOid,isDraft,reviewDecision,additions,deletions,changedFiles,author"},
+		"--json", "number,title,body,state,url,baseRefName,headRefName,headRefOid,isDraft,reviewDecision,mergeable,mergeStateStatus,additions,deletions,changedFiles,author,headRepositoryOwner"},
 		c.repoArgs()...)
 	out, err := run(nil, args...)
 	if err != nil {
@@ -181,6 +191,14 @@ func (c *Client) ViewPR(number int) (*PR, error) {
 	var pr PR
 	if err := json.Unmarshal(out, &pr); err != nil {
 		return nil, fmt.Errorf("decode pr: %w", err)
+	}
+	var owner struct {
+		HeadRepositoryOwner struct {
+			Login string `json:"login"`
+		} `json:"headRepositoryOwner"`
+	}
+	if json.Unmarshal(out, &owner) == nil {
+		pr.HeadRepoOwner = owner.HeadRepositoryOwner.Login
 	}
 	return &pr, nil
 }
@@ -235,6 +253,79 @@ func (c *Client) Review(number int, event ReviewEvent, body string) error {
 		stdin = []byte(body)
 	}
 	_, err := run(stdin, args...)
+	return err
+}
+
+// MergeMethod selects how a PR is merged.
+type MergeMethod string
+
+const (
+	MergeCommit MergeMethod = "merge"
+	Squash      MergeMethod = "squash"
+	Rebase      MergeMethod = "rebase"
+)
+
+// MergeOptions controls how a PR is merged. Subject and Body override the
+// commit message for merge-commit and squash merges; empty values leave
+// GitHub's defaults in place. Rebase merges have no commit message.
+type MergeOptions struct {
+	Method       MergeMethod
+	DeleteBranch bool
+	Subject      string
+	Body         string
+}
+
+// Merge merges the pull request.
+func (c *Client) Merge(number int, o MergeOptions) error {
+	args := append([]string{"pr", "merge", strconv.Itoa(number), "--" + string(o.Method)}, c.repoArgs()...)
+	if o.DeleteBranch {
+		args = append(args, "--delete-branch")
+	}
+	var stdin []byte
+	if o.Method != Rebase {
+		if s := strings.TrimSpace(o.Subject); s != "" {
+			args = append(args, "--subject", s)
+		}
+		if b := strings.TrimSpace(o.Body); b != "" {
+			args = append(args, "--body-file", "-")
+			stdin = []byte(b)
+		}
+	}
+	_, err := run(stdin, args...)
+	return err
+}
+
+// DefaultMergeMessage returns GitHub's default commit subject and body for a
+// merge-commit or squash merge of the PR.
+func DefaultMergeMessage(pr *PR, method MergeMethod) (subject, body string) {
+	switch method {
+	case Squash:
+		return fmt.Sprintf("%s (#%d)", pr.Title, pr.Number), strings.TrimSpace(pr.Body)
+	case MergeCommit:
+		head := pr.HeadRefName
+		if pr.HeadRepoOwner != "" {
+			head = pr.HeadRepoOwner + "/" + head
+		}
+		return fmt.Sprintf("Merge pull request #%d from %s", pr.Number, head), pr.Title
+	}
+	return "", ""
+}
+
+// Close closes the pull request without merging, optionally deleting the
+// head branch.
+func (c *Client) Close(number int, deleteBranch bool) error {
+	args := append([]string{"pr", "close", strconv.Itoa(number)}, c.repoArgs()...)
+	if deleteBranch {
+		args = append(args, "--delete-branch")
+	}
+	_, err := run(nil, args...)
+	return err
+}
+
+// Reopen reopens a closed (not merged) pull request.
+func (c *Client) Reopen(number int) error {
+	args := append([]string{"pr", "reopen", strconv.Itoa(number)}, c.repoArgs()...)
+	_, err := run(nil, args...)
 	return err
 }
 

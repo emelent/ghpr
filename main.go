@@ -32,6 +32,7 @@ Flags:
   -t, --theme name        UI theme: %s (default: %s, env GHPR_THEME)
   --syntax name           chroma style for syntax highlighting (default: the theme's own, env GHPR_SYNTAX)
   -s, --split             start in side-by-side mode
+  -S, --state name        PR picker filter: open (default), closed, merged, all
   -V, --version           print the version and exit
   -h, --help              show this help
 
@@ -40,13 +41,15 @@ Keys inside the app: press ? for the full list.
 }
 
 func main() {
-	var repo, theme, syntax string
+	var repo, theme, syntax, listState string
 	var split, help, showVersion bool
 	flag.StringVar(&repo, "R", "", "")
 	flag.StringVar(&repo, "repo", "", "")
 	flag.StringVar(&theme, "t", os.Getenv("GHPR_THEME"), "")
 	flag.StringVar(&theme, "theme", os.Getenv("GHPR_THEME"), "")
 	flag.StringVar(&syntax, "syntax", os.Getenv("GHPR_SYNTAX"), "")
+	flag.StringVar(&listState, "S", "open", "")
+	flag.StringVar(&listState, "state", "open", "")
 	flag.BoolVar(&split, "s", false, "")
 	flag.BoolVar(&split, "split", false, "")
 	flag.BoolVar(&showVersion, "V", false, "")
@@ -100,6 +103,7 @@ func main() {
 
 	model := ui.New(&gh.Client{Repo: repo}, number, syntax)
 	model.SetSplit(split)
+	model.SetListState(listState)
 	if dir, err := state.Dir(); err == nil {
 		if st, err := state.Open(dir); err == nil {
 			model.SetStore(st)

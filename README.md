@@ -15,6 +15,9 @@ reuses your existing `gh` login and works with any host `gh` is configured for.
 - Review threads rendered inline under the lines they belong to
 - Create single-line and multi-line comments, reply to threads, resolve/unresolve threads
 - Submit reviews: approve, request changes, or comment
+- Merge the PR (merge commit, squash or rebase, optionally deleting the branch), editing the commit message first; the header shows the merge state
+- Close and reopen PRs
+- PR picker with text filter and open / closed / merged / all state filter
 - Post general PR comments
 - Spinner-based loaders for every fetch and action, with success/error feedback
 - Interactive picker of open PRs when no PR is given
@@ -52,8 +55,9 @@ ghpr            # pick from open PRs
 ghpr 42         # open PR #42
 ```
 
-In the picker, `j`/`k` move, `/` filters, and `enter`, `l` or `→` opens the
-selected pull request. `q` quits.
+In the picker, `j`/`k` move, `/` filters by text, `s` cycles the state filter
+(open → closed → merged → all; open is the default, or pass `--state`), and
+`enter`, `l` or `→` opens the selected pull request. `q` quits.
 
 Or point at any repository:
 
@@ -71,6 +75,7 @@ ghpr https://github.com/owner/repo/pull/42
 | `-t, --theme name` | UI theme: `github-dark` (default) or `solarized-dark`. Env: `GHPR_THEME` |
 | `--syntax name` | Chroma style for syntax highlighting. Defaults to the theme's pairing (`catppuccin-mocha` for github-dark, `solarized-dark` for solarized-dark). Env: `GHPR_SYNTAX` |
 | `-s, --split` | Start in side-by-side mode |
+| `-S, --state name` | Initial picker filter: `open` (default), `closed`, `merged` or `all` |
 | `-V, --version` | Print the version and exit |
 | `-h, --help` | Show help |
 
@@ -115,6 +120,8 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 | `r` | Reply to the thread under the cursor |
 | `x` | Resolve / unresolve the thread under the cursor |
 | `v` | Submit a review, then `a` approve, `r` request changes, `c` comment |
+| `M` | Merge the PR. Toggle `d` to delete the branch, then `m` merge commit or `s` squash opens the commit message (subject on the first line, body below) for editing; `⌘+s` merges. `r` rebase asks for `y` to confirm |
+| `X` | Close the PR without merging (optionally deleting the branch), or reopen a closed PR, after a `y` confirmation |
 | `C` | Post a general comment on the PR |
 | `o` | Open the PR in the browser |
 | `R` | Refresh PR, diff and threads |
@@ -123,7 +130,7 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 
 | Key | Action |
 | --- | --- |
-| `⌘+enter` (also `ctrl+enter`) | Submit |
+| `⌘+s` (also `ctrl+s`) | Submit |
 | `esc` | Cancel |
 
 `enter` inserts a newline. An approval may be submitted with an empty body.
@@ -132,14 +139,17 @@ Every other comment or review needs text.
 The Command key only reaches terminal apps when the terminal supports the
 kitty keyboard protocol (Ghostty, kitty, WezTerm, recent iTerm2). Inside tmux,
 add `set -s extended-keys on` to your tmux config so the modifier is passed
-through. Where Command is not reported, use `ctrl+enter`.
+through. Where Command is not reported, use `ctrl+s`. Enter always inserts a
+newline in the text box.
 
 ### General
 
 | Key | Action |
 | --- | --- |
 | `?` | Toggle help |
-| `q`, `ctrl+c` | Quit |
+| `b`, `backspace` | Back to the pull request list |
+| `q` | Back to the list when the PR was opened from it, otherwise quit |
+| `Q`, `ctrl+c` | Quit |
 
 ## Viewed files
 
@@ -157,6 +167,7 @@ Every operation shells out to `gh`:
 
 - `gh pr list`, `gh pr view`, `gh pr diff` for reading
 - `gh pr review`, `gh pr comment` for reviews and PR comments
+- `gh pr merge`, `gh pr close`, `gh pr reopen` for merging, closing and reopening
 - `gh api` (REST) for creating line comments and replies
 - `gh api graphql` for fetching review threads and resolving/unresolving them
 

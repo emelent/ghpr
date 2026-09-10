@@ -481,6 +481,19 @@ func (m *Model) renderHeader(width int) []string {
 	case "REVIEW_REQUIRED":
 		decStyled = styWarn.Render(decision)
 	}
+	mergeInfo := ""
+	if pr.State == "OPEN" && pr.MergeStateStatus != "" {
+		st := styDim.Render(pr.MergeStateStatus)
+		switch pr.MergeStateStatus {
+		case "CLEAN":
+			st = styOK.Render("mergeable")
+		case "BLOCKED", "DIRTY", "UNSTABLE", "BEHIND":
+			st = styErr.Render(pr.MergeStateStatus)
+		case "DRAFT", "HAS_HOOKS":
+			st = styWarn.Render(pr.MergeStateStatus)
+		}
+		mergeInfo = styDim.Render(" · ") + st
+	}
 	open, total := 0, 0
 	for _, t := range m.threads {
 		total++
@@ -490,7 +503,7 @@ func (m *Model) renderHeader(width int) []string {
 	}
 	l2 := styDim.Render(fmt.Sprintf(" %s · @%s · %s → %s · ", m.client.Repo, pr.Author.Login, pr.HeadRefName, pr.BaseRefName)) +
 		styOK.Render(fmt.Sprintf("+%d", pr.Additions)) + " " + styErr.Render(fmt.Sprintf("-%d", pr.Deletions)) +
-		styDim.Render(fmt.Sprintf(" · %d files · threads %d open / %d · ", pr.ChangedFiles, open, total)) + decStyled
+		styDim.Render(fmt.Sprintf(" · %d files · threads %d open / %d · ", pr.ChangedFiles, open, total)) + decStyled + mergeInfo
 	return []string{padRight(truncateTail(l1, width), width), padRight(truncateTail(l2, width), width)}
 }
 
@@ -500,6 +513,35 @@ func (m *Model) renderStatus(width int) string {
 	switch {
 	case m.busy != "":
 		left = styBar.Render(" "+m.spinner.View()+" ") + styBar.Render(m.busy)
+	case m.overlay == overlayMerge:
+		del := "off"
+		if m.mergeDelete {
+			del = "on"
+		}
+		if m.mergeMethod == gh.Rebase {
+			left = styBar.Render(fmt.Sprintf(" Rebase and merge PR #%d (delete branch: %s)? ", m.number, del)) +
+				styBarKey.Render("y") + styBar.Render(" confirm  ") + styBarKey.Render("n") + styBar.Render(" cancel")
+		} else {
+			warn := ""
+			if m.pr != nil && m.pr.MergeStateStatus != "" && m.pr.MergeStateStatus != "CLEAN" && m.pr.MergeStateStatus != "UNKNOWN" {
+				warn = lipgloss.NewStyle().Background(colBarBg).Foreground(colWarn).Render(" ⚠ "+m.pr.MergeStateStatus) + styBar.Render("  ")
+			}
+			left = styBar.Render(" Merge: ") + warn + styBarKey.Render("m") + styBar.Render(" merge commit  ") +
+				styBarKey.Render("s") + styBar.Render(" squash  ") + styBarKey.Render("r") + styBar.Render(" rebase  ") +
+				styBarKey.Render("d") + styBar.Render(" delete branch: "+del+"  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
+		}
+	case m.overlay == overlayState:
+		if m.pr != nil && m.pr.State == "OPEN" {
+			del := "off"
+			if m.mergeDelete {
+				del = "on"
+			}
+			left = styBar.Render(fmt.Sprintf(" Close PR #%d without merging? ", m.number)) + styBarKey.Render("y") + styBar.Render(" confirm  ") +
+				styBarKey.Render("d") + styBar.Render(" delete branch: "+del+"  ") + styBarKey.Render("n") + styBar.Render(" cancel")
+		} else {
+			left = styBar.Render(fmt.Sprintf(" Reopen PR #%d? ", m.number)) + styBarKey.Render("y") + styBar.Render(" confirm  ") +
+				styBarKey.Render("n") + styBar.Render(" cancel")
+		}
 	case m.overlay == overlayReview:
 		left = styBar.Render(" Submit review: ") + styBarKey.Render("a") + styBar.Render(" approve  ") +
 			styBarKey.Render("r") + styBar.Render(" request changes  ") + styBarKey.Render("c") + styBar.Render(" comment  ") +
@@ -519,10 +561,16 @@ func (m *Model) renderStatus(width int) string {
 		left = styBar.Render(" ")
 	}
 	var right string
-	if m.overlay == overlayInput {
-		right = styBarKey.Render("⌘+enter") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
-	} else {
-		hints := []struct{ k, v string }{{"j/k", "move"}, {"J/K", "change"}, {"m", "viewed"}, {"s", "split"}, {"F", "full"}, {"V", "select"}, {"c", "comment"}, {"r", "reply"}, {"x", "resolve"}, {"v", "review"}, {"?", "help"}}
+	switch {
+	case m.overlay == overlayInput && m.inKind == inputMerge:
+		right = styBarKey.Render("⌘+s") + styBarDim.Render(" merge  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
+	case m.overlay == overlayInput:
+		right = styBarKey.Render("⌘+s") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
+	case m.screen == screenPicker:
+		right = styBarKey.Render("enter/l") + styBarDim.Render(" open  ") + styBarKey.Render("s") + styBarDim.Render(" state: "+m.listState+"  ") +
+			styBarKey.Render("/") + styBarDim.Render(" filter  ") + styBarKey.Render("q") + styBarDim.Render(" quit ")
+	default:
+		hints := []struct{ k, v string }{{"j/k", "move"}, {"J/K", "change"}, {"m", "viewed"}, {"s", "split"}, {"F", "full"}, {"V", "select"}, {"c", "comment"}, {"r", "reply"}, {"x", "resolve"}, {"v", "review"}, {"M", "merge"}, {"?", "help"}}
 		var sb strings.Builder
 		for _, h := range hints {
 			sb.WriteString(styBarKey.Render(h.k) + styBarDim.Render(" "+h.v+"  "))
@@ -575,12 +623,16 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"r", "reply to the thread under the cursor"},
 		{"x", "resolve / unresolve the thread under the cursor"},
 		{"v", "submit a review (approve / request changes / comment)"},
+		{"M", "merge the PR: m / s open the commit message to edit, r rebase, d delete branch"},
+		{"X", "close the PR without merging, or reopen a closed PR"},
 		{"C", "comment on the PR (general)"},
 		{"o", "open the PR in the browser"},
 		{"R", "refresh PR, diff and threads"},
-		{"⌘+enter / esc", "submit / cancel text entry (ctrl+enter also submits)"},
+		{"⌘+s / esc", "submit / cancel text entry (ctrl+s also submits)"},
 		{"?", "toggle this help"},
-		{"q", "quit"},
+		{"b / backspace", "back to the pull request list"},
+		{"q", "back to the list when opened from it, otherwise quit"},
+		{"Q / ctrl+c", "quit"},
 	}
 	lines := []string{padRight(styTitle.Render(" Keys"), width), styBorder.Render(strings.Repeat("─", width))}
 	for _, r := range rows {

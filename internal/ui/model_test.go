@@ -174,7 +174,7 @@ func TestInputFlow(t *testing.T) {
 		t.Fatalf("title missing")
 	}
 	// Empty submit is rejected.
-	m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModSuper})
+	m.handleKey(tea.KeyPressMsg{Code: 's', Mod: tea.ModSuper})
 	if m.overlay != overlayInput || !m.statusErr {
 		t.Fatalf("empty body should be rejected")
 	}
@@ -699,5 +699,186 @@ func TestPickerOpensWithL(t *testing.T) {
 	_, cmd := m.handleKey(tea.KeyPressMsg{Code: 'l', Text: "l"})
 	if m.screen != screenDiff || m.number != 34 || cmd == nil {
 		t.Fatalf("l should open PR #34 and start loading: screen=%v number=%d", m.screen, m.number)
+	}
+}
+
+func TestMergeMenu(t *testing.T) {
+	m := newTestModel(t)
+	m.pr.MergeStateStatus = "BLOCKED"
+	m.pr.Body = "Fixes the thing.\n\nDetails here."
+	key := func(k string) tea.Cmd {
+		var msg tea.KeyPressMsg
+		switch k {
+		case "esc":
+			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
+		case "submit":
+			msg = tea.KeyPressMsg{Code: 's', Mod: tea.ModSuper}
+		default:
+			msg = tea.KeyPressMsg{Code: rune(k[0]), Text: k}
+		}
+		_, cmd := m.handleKey(msg)
+		return cmd
+	}
+	key("M")
+	if m.overlay != overlayMerge {
+		t.Fatal("M should open the merge menu")
+	}
+	bar := ansi.Strip(m.View().Content)
+	if !strings.Contains(bar, "BLOCKED") || !strings.Contains(bar, "squash") {
+		t.Fatalf("menu should warn about merge state and list methods:\n%s", bar)
+	}
+	if key("y") != nil {
+		t.Fatal("y without rebase chosen must not merge")
+	}
+	// Squash opens the commit message editor prefilled with GitHub's default.
+	key("d")
+	key("s")
+	if m.overlay != overlayInput || m.inKind != inputMerge || m.mergeMethod != gh.Squash || !m.mergeDelete {
+		t.Fatalf("s should open the merge editor: overlay=%v kind=%v", m.overlay, m.inKind)
+	}
+	if got := m.ta.Value(); got != "Test PR (#7)\n\nFixes the thing.\n\nDetails here." {
+		t.Fatalf("prefilled message %q", got)
+	}
+	if !strings.Contains(ansi.Strip(m.View().Content), "edit the commit message") {
+		t.Fatal("editor title missing")
+	}
+	// Edit and submit.
+	m.ta.SetValue("Custom subject (#7)\n\nCustom body")
+	cmd := key("submit")
+	if cmd == nil || m.overlay != overlayNone || m.busy == "" || m.mergeMethod != "" {
+		t.Fatalf("submit should fire the merge with a loader: busy=%q", m.busy)
+	}
+	m.busy = ""
+	// Rebase keeps a yes/no confirmation.
+	key("M")
+	key("r")
+	if m.mergeMethod != gh.Rebase || !strings.Contains(ansi.Strip(m.View().Content), "Rebase and merge PR #7") {
+		t.Fatal("rebase confirmation missing")
+	}
+	key("n")
+	if m.overlay != overlayNone || m.mergeMethod != "" {
+		t.Fatal("n should cancel")
+	}
+	key("M")
+	key("r")
+	if key("y") == nil || m.overlay != overlayNone {
+		t.Fatal("y should rebase-merge")
+	}
+	if !strings.Contains(ansi.Strip(m.renderHeader(200)[1]), "BLOCKED") {
+		t.Fatal("header should show the merge state")
+	}
+	// Merge-commit default message.
+	pr := &gh.PR{Number: 9, Title: "Do it", HeadRefName: "feat", HeadRepoOwner: "alice"}
+	if s, b := gh.DefaultMergeMessage(pr, gh.MergeCommit); s != "Merge pull request #9 from alice/feat" || b != "Do it" {
+		t.Fatalf("merge default %q %q", s, b)
+	}
+	if s, b := splitMessage("  Subject\r\n\nline1\nline2\n"); s != "Subject" || b != "line1\nline2" {
+		t.Fatalf("splitMessage %q %q", s, b)
+	}
+}
+
+func TestPickerStateFilter(t *testing.T) {
+	m := New(&gh.Client{Repo: "o/r"}, 0, "")
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.Update(prListMsg{prs: []gh.PRSummary{{Number: 1, Title: "one", State: "OPEN"}}})
+	if m.listState != "open" || !strings.HasPrefix(m.list.Title, "Open pull requests") {
+		t.Fatalf("default state: %q %q", m.listState, m.list.Title)
+	}
+	_, cmd := m.handleKey(tea.KeyPressMsg{Code: 's', Text: "s"})
+	if m.listState != "closed" || cmd == nil || !strings.Contains(m.busy, "closed") || !strings.HasPrefix(m.list.Title, "Closed") {
+		t.Fatalf("s should switch to closed and reload: %q busy=%q", m.listState, m.busy)
+	}
+	m.Update(prListMsg{prs: []gh.PRSummary{{Number: 2, Title: "two", State: "MERGED"}}})
+	if it, ok := m.list.SelectedItem().(prItem); !ok || !strings.HasPrefix(it.Description(), "MERGED · ") {
+		t.Fatal("non-open PRs should show their state")
+	}
+	for _, want := range []string{"merged", "all", "open"} {
+		m.handleKey(tea.KeyPressMsg{Code: 's', Text: "s"})
+		if m.listState != want {
+			t.Fatalf("cycle: got %q want %q", m.listState, want)
+		}
+	}
+	// A failed reload of a non-default filter is a status, not fatal.
+	m.listState = "closed"
+	m.Update(prListMsg{err: errString("nope")})
+	if m.fatal != nil || !m.statusErr {
+		t.Fatal("list error should be shown in the status bar")
+	}
+	m.SetListState("merged")
+	if m.listState != "merged" || !strings.HasPrefix(m.list.Title, "Merged") {
+		t.Fatal("SetListState")
+	}
+	m.SetListState("bogus")
+	if m.listState != "merged" {
+		t.Fatal("invalid state ignored")
+	}
+}
+
+func TestBackToList(t *testing.T) {
+	m := New(&gh.Client{Repo: "o/r"}, 0, "")
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.Update(prListMsg{prs: []gh.PRSummary{{Number: 7, Title: "one"}}})
+	m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.screen != screenDiff || !m.fromPicker {
+		t.Fatal("enter should open the PR from the picker")
+	}
+	m.pr = &gh.PR{Number: 7}
+	m.pending = 1
+	m.Update(diffMsg{files: diff.Parse(sample)})
+	// q returns to the list when opened from it.
+	_, cmd := m.handleKey(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	if m.screen != screenPicker || cmd == nil || m.pr != nil || len(m.files) != 0 {
+		t.Fatalf("q should go back to the list and reset state: screen=%v", m.screen)
+	}
+	if !strings.Contains(m.busy, "Loading pull requests") {
+		t.Fatalf("list should refresh with a loader, busy=%q", m.busy)
+	}
+	// Opened directly: q quits, b goes back.
+	d := newTestModel(t)
+	_, cmd = d.handleKey(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	if d.screen != screenDiff || cmd == nil {
+		t.Fatal("q should quit when not opened from the picker")
+	}
+	d.handleKey(tea.KeyPressMsg{Code: 'b', Text: "b"})
+	if d.screen != screenPicker {
+		t.Fatal("b should always return to the list")
+	}
+}
+
+func TestCloseReopen(t *testing.T) {
+	m := newTestModel(t)
+	key := func(k string) tea.Cmd {
+		_, cmd := m.handleKey(tea.KeyPressMsg{Code: rune(k[0]), Text: k})
+		return cmd
+	}
+	key("X")
+	if m.overlay != overlayState || !strings.Contains(ansi.Strip(m.View().Content), "Close PR #7 without merging?") {
+		t.Fatal("X on an open PR should ask to close")
+	}
+	key("n")
+	if m.overlay != overlayNone {
+		t.Fatal("n cancels")
+	}
+	key("X")
+	key("d")
+	if cmd := key("y"); cmd == nil || m.overlay != overlayNone || !strings.Contains(m.busy, "Close PR") {
+		t.Fatalf("y should close with a loader: busy=%q", m.busy)
+	}
+	m.busy = ""
+	m.pr.State = "CLOSED"
+	key("X")
+	if !strings.Contains(ansi.Strip(m.View().Content), "Reopen PR #7?") {
+		t.Fatal("X on a closed PR should ask to reopen")
+	}
+	if cmd := key("y"); cmd == nil || !strings.Contains(m.busy, "Reopen PR") {
+		t.Fatalf("y should reopen: busy=%q", m.busy)
+	}
+	m.busy = ""
+	if key("M"); m.overlay == overlayMerge || !m.statusErr {
+		t.Fatal("merging a closed PR should be refused")
+	}
+	m.pr.State = "MERGED"
+	if key("X"); m.overlay == overlayState || !m.statusErr {
+		t.Fatal("reopening a merged PR should be refused")
 	}
 }

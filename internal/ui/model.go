@@ -31,6 +31,8 @@ const (
 	overlayNone overlayKind = iota
 	overlayInput
 	overlayReview
+	overlayMerge
+	overlayState // close / reopen confirmation
 	overlayHelp
 )
 
@@ -41,6 +43,7 @@ const (
 	inputReply
 	inputReview
 	inputPRComment
+	inputMerge
 )
 
 const (
@@ -60,7 +63,14 @@ type Model struct {
 	overlay       overlayKind
 
 	// picker
-	list list.Model
+	list      list.Model
+	listState string // open, closed, merged or all
+
+	fromPicker bool // the PR was opened from the list; q returns to it
+
+	// merge menu
+	mergeMethod gh.MergeMethod // chosen method awaiting confirmation ("" = none)
+	mergeDelete bool           // delete the head branch after merging
 
 	// data
 	pr      *gh.PR
@@ -160,7 +170,8 @@ func New(client *gh.Client, number int, syntax string) *Model {
 	d.Styles.SelectedTitle = d.Styles.SelectedTitle.Foreground(colAccent).BorderForeground(colAccent)
 	d.Styles.SelectedDesc = d.Styles.SelectedDesc.Foreground(colDim).BorderForeground(colAccent)
 	l := list.New(nil, d, 0, 0)
-	l.Title = fmt.Sprintf("Open pull requests · %s", client.Repo)
+	m.listState = "open"
+	l.Title = m.listTitle()
 	l.Styles.Title = lipgloss.NewStyle().Background(colSelBg).Foreground(colText).Padding(0, 1)
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
@@ -217,7 +228,11 @@ func (p prItem) Description() string {
 	if d == "" {
 		d = "no review"
 	}
-	return fmt.Sprintf("@%s · %s · %s · updated %s", p.s.Author.Login, p.s.HeadRefName, d, ago(p.s.UpdatedAt))
+	prefix := ""
+	if p.s.State != "" && p.s.State != "OPEN" {
+		prefix = p.s.State + " · "
+	}
+	return fmt.Sprintf("%s@%s · %s · %s · updated %s", prefix, p.s.Author.Login, p.s.HeadRefName, d, ago(p.s.UpdatedAt))
 }
 func (p prItem) FilterValue() string {
 	return p.Title() + " " + p.s.Author.Login + " " + p.s.HeadRefName
@@ -226,11 +241,41 @@ func (p prItem) FilterValue() string {
 // ---------- commands ----------
 
 func (m *Model) fetchList() tea.Cmd {
-	c := m.client
+	c, st := m.client, m.listState
 	return func() tea.Msg {
-		prs, err := c.ListPRs(100)
+		prs, err := c.ListPRs(st, 100)
 		return prListMsg{prs, err}
 	}
+}
+
+var listStates = []string{"open", "closed", "merged", "all"}
+
+// SetListState sets the PR picker filter (open, closed, merged, all).
+func (m *Model) SetListState(s string) {
+	for _, v := range listStates {
+		if v == s {
+			m.listState = s
+			m.list.Title = m.listTitle()
+			return
+		}
+	}
+}
+
+func (m *Model) listTitle() string {
+	return fmt.Sprintf("%s pull requests · %s", strings.ToUpper(m.listState[:1])+m.listState[1:], m.client.Repo)
+}
+
+// cycleListState moves to the next state filter and reloads the list.
+func (m *Model) cycleListState() tea.Cmd {
+	for i, v := range listStates {
+		if v == m.listState {
+			m.listState = listStates[(i+1)%len(listStates)]
+			break
+		}
+	}
+	m.list.Title = m.listTitle()
+	m.list.ResetFilter()
+	return tea.Batch(m.list.SetItems(nil), m.setBusy("Loading "+m.listState+" pull requests…"), m.fetchList())
 }
 
 func (m *Model) fetchPR() tea.Cmd {
@@ -357,8 +402,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case prListMsg:
 		m.busy = ""
 		if msg.err != nil {
-			m.fatal = msg.err
-			return m, tea.Quit
+			if len(m.list.Items()) == 0 && m.screen == screenPicker && m.listState == "open" {
+				m.fatal = msg.err
+				return m, tea.Quit
+			}
+			return m, m.setStatus("List PRs: "+msg.err.Error(), true)
 		}
 		items := make([]list.Item, len(msg.prs))
 		for i, p := range msg.prs {
@@ -480,10 +528,13 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			switch key {
 			case "q":
 				return m, tea.Quit
+			case "s":
+				return m, m.cycleListState()
 			case "enter", "l", "right":
 				if it, ok := m.list.SelectedItem().(prItem); ok {
 					m.number = it.s.Number
 					m.screen = screenDiff
+					m.fromPicker = true
 					return m, m.loadAll()
 				}
 			}
@@ -499,9 +550,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.closeInput()
 			return m, nil
-		case "super+enter", "meta+enter", "ctrl+enter":
-			// cmd+enter on macOS (reported as super/meta by terminals that
-			// support the kitty keyboard protocol); ctrl+enter elsewhere.
+		case "super+s", "meta+s", "ctrl+s":
+			// cmd+s on macOS (reported as super/meta by terminals that
+			// support the kitty keyboard protocol); ctrl+s elsewhere.
 			return m, m.submitInput()
 		}
 		var cmd tea.Cmd
@@ -527,6 +578,25 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case overlayMerge:
+		return m.handleMergeKey(key)
+
+	case overlayState:
+		switch key {
+		case "d":
+			m.mergeDelete = !m.mergeDelete
+		case "y", "enter":
+			m.overlay = overlayNone
+			n, del := m.number, m.mergeDelete
+			if m.pr.State == "OPEN" {
+				return m, m.action("Close PR", true, func() error { return m.client.Close(n, del) })
+			}
+			return m, m.action("Reopen PR", true, func() error { return m.client.Reopen(n) })
+		case "esc", "n", "q", "X":
+			m.overlay = overlayNone
+		}
+		return m, nil
+
 	case overlayHelp:
 		m.overlay = overlayNone
 		return m, nil
@@ -544,7 +614,29 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.clearSelection()
 			return m, nil
 		}
+		if m.fromPicker {
+			return m, m.backToList()
+		}
 		return m, tea.Quit
+	case "Q":
+		return m, tea.Quit
+	case "b", "backspace":
+		return m, m.backToList()
+	case "M":
+		if m.busy == "" && m.pr != nil {
+			if m.pr.State != "OPEN" {
+				return m, m.setStatus("PR is "+strings.ToLower(m.pr.State)+"; only open PRs can be merged", true)
+			}
+			m.overlay = overlayMerge
+			m.mergeMethod = ""
+		}
+	case "X":
+		if m.busy == "" && m.pr != nil {
+			if m.pr.State == "MERGED" {
+				return m, m.setStatus("Merged PRs cannot be reopened", true)
+			}
+			m.overlay = overlayState
+		}
 	case "t":
 		m.tree = !m.tree
 		m.fileScroll = 0
@@ -1180,10 +1272,83 @@ func (m *Model) toggleResolve() tea.Cmd {
 	return m.action("Resolve thread", true, func() error { return m.client.ResolveThread(t.ID) })
 }
 
+// backToList leaves the diff view for the PR picker and refreshes it.
+func (m *Model) backToList() tea.Cmd {
+	m.screen = screenPicker
+	m.overlay = overlayNone
+	m.pr, m.files, m.threads, m.rows, m.rowStart = nil, nil, nil, nil, nil
+	m.fingerprints = nil
+	m.pending = 0
+	m.busy = ""
+	m.status = ""
+	m.clearSelection()
+	m.closeInput()
+	m.fromPicker = false
+	m.list.Title = m.listTitle()
+	return tea.Batch(m.setBusy("Loading pull requests…"), m.fetchList())
+}
+
+// handleMergeKey drives the merge menu: pick a method, toggle branch
+// deletion, then confirm with y.
+func (m *Model) handleMergeKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc", "n", "q", "M":
+		m.overlay = overlayNone
+		m.mergeMethod = ""
+	case "d":
+		m.mergeDelete = !m.mergeDelete
+	case "m", "s":
+		method := gh.MergeCommit
+		if key == "s" {
+			method = gh.Squash
+		}
+		m.overlay = overlayNone
+		m.mergeMethod = method
+		del := "off"
+		if m.mergeDelete {
+			del = "on"
+		}
+		m.openInput(inputMerge, fmt.Sprintf("Merge PR #%d via %s (delete branch: %s) — edit the commit message; first line is the subject", m.number, method, del))
+		subject, body := gh.DefaultMergeMessage(m.pr, method)
+		if body != "" {
+			m.ta.SetValue(subject + "\n\n" + body)
+		} else {
+			m.ta.SetValue(subject)
+		}
+		m.ta.MoveToBegin()
+	case "r":
+		m.mergeMethod = gh.Rebase
+	case "y", "enter":
+		if m.mergeMethod != gh.Rebase {
+			return m, nil
+		}
+		return m, m.doMerge(gh.MergeOptions{Method: gh.Rebase, DeleteBranch: m.mergeDelete})
+	}
+	return m, nil
+}
+
+// doMerge runs the merge and refreshes the PR afterwards.
+func (m *Model) doMerge(o gh.MergeOptions) tea.Cmd {
+	m.overlay = overlayNone
+	m.mergeMethod = ""
+	n := m.number
+	return m.action(fmt.Sprintf("Merge (%s)", o.Method), true, func() error {
+		return m.client.Merge(n, o)
+	})
+}
+
+// splitMessage separates a commit message into subject (first line) and
+// body (the rest, trimmed).
+func splitMessage(text string) (subject, body string) {
+	text = strings.ReplaceAll(strings.TrimSpace(text), "\r", "")
+	subject, body, _ = strings.Cut(text, "\n")
+	return strings.TrimSpace(subject), strings.TrimSpace(body)
+}
+
 func (m *Model) submitInput() tea.Cmd {
 	body := strings.TrimSpace(m.ta.Value())
 	kind := m.inKind
-	needsBody := kind != inputReview || m.inEvent != gh.Approve
+	needsBody := kind != inputMerge && (kind != inputReview || m.inEvent != gh.Approve)
 	if needsBody && body == "" {
 		return m.setStatus("Comment body is empty", true)
 	}
@@ -1205,6 +1370,9 @@ func (m *Model) submitInput() tea.Cmd {
 		return m.action("Post reply", true, func() error { return c.ReplyToComment(n, id, body) })
 	case inputPRComment:
 		return m.action("Post PR comment", false, func() error { return c.Comment(n, body) })
+	case inputMerge:
+		subject, msgBody := splitMessage(body)
+		return m.doMerge(gh.MergeOptions{Method: m.mergeMethod, DeleteBranch: m.mergeDelete, Subject: subject, Body: msgBody})
 	case inputReview:
 		ev := m.inEvent
 		label := map[gh.ReviewEvent]string{gh.Approve: "Approve", gh.RequestChanges: "Request changes", gh.CommentReview: "Submit review"}[ev]
