@@ -581,9 +581,9 @@ func (m *Model) renderStatus(width int) string {
 	var right string
 	switch {
 	case m.overlay == overlayInput && m.inKind == inputMerge:
-		right = styBarKey.Render("ctrl+m") + styBarDim.Render(" merge  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
+		right = styBarKey.Render("⌘+j") + styBarDim.Render(" merge  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
 	case m.overlay == overlayInput:
-		right = styBarKey.Render("ctrl+m") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
+		right = styBarKey.Render("⌘+j") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
 	case m.screen == screenPicker:
 		right = styBarKey.Render("enter/l") + styBarDim.Render(" open  ") + styBarKey.Render("s") + styBarDim.Render(" state: "+m.listState+"  ") +
 			styBarKey.Render("/") + styBarDim.Render(" filter  ") + styBarKey.Render("q") + styBarDim.Render(" quit ")
@@ -653,7 +653,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"C", "comment on the PR (general)"},
 		{"o", "open the PR in the browser"},
 		{"R", "refresh PR, diff and threads"},
-		{"ctrl+m / esc", "submit / cancel text entry (ctrl+s also submits)"},
+		{"⌘+j / esc", "submit / cancel text entry (ctrl+s also submits)"},
 		{"?", "toggle this help"},
 		{"b / backspace", "back to the pull request list"},
 		{"q", "back to the list when opened from it, otherwise quit"},

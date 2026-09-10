@@ -174,7 +174,7 @@ func TestInputFlow(t *testing.T) {
 		t.Fatalf("title missing")
 	}
 	// Empty submit is rejected.
-	m.handleKey(tea.KeyPressMsg{Code: 'm', Mod: tea.ModCtrl})
+	m.handleKey(tea.KeyPressMsg{Code: 'j', Mod: tea.ModSuper})
 	if m.overlay != overlayInput || !m.statusErr {
 		t.Fatalf("empty body should be rejected")
 	}
@@ -713,7 +713,7 @@ func TestMergeMenu(t *testing.T) {
 		case "esc":
 			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
 		case "submit":
-			msg = tea.KeyPressMsg{Code: 'm', Mod: tea.ModCtrl}
+			msg = tea.KeyPressMsg{Code: 'j', Mod: tea.ModSuper}
 		default:
 			msg = tea.KeyPressMsg{Code: rune(k[0]), Text: k}
 		}
@@ -1323,9 +1323,9 @@ func TestDebugKeys(t *testing.T) {
 	m.SetDebugKeys(true)
 	m.cursor = 1
 	m.Update(tea.KeyPressMsg{Code: 'C', Text: "C"})
-	m.Update(tea.KeyPressMsg{Code: 'm', Mod: tea.ModCtrl}) // empty submit -> error status
+	m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}) // empty submit -> error status
 	plain := ansi.Strip(m.View().Content)
-	if m.lastKey != "ctrl+m" || !strings.Contains(plain, "key: ctrl+m") {
+	if m.lastKey != "ctrl+s" || !strings.Contains(plain, "key: ctrl+s") {
 		t.Fatalf("key name should show: %q", m.lastKey)
 	}
 	if !strings.Contains(plain, "Comment body is empty") {

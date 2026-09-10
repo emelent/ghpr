@@ -126,7 +126,7 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 | `x` | Resolve / unresolve the thread under the cursor |
 | `d` | Delete one of your comments in the thread under the cursor. The newest is preselected; `j`/`k` pick another, `y` confirms |
 | `v` | Submit a review, then `a` approve, `r` request changes, `c` comment |
-| `M` | Merge the PR. Toggle `d` to delete the branch, then `m` merge commit or `s` squash opens the commit message (subject on the first line, body below) for editing; `ctrl+m` merges. `r` rebase asks for `y` to confirm |
+| `M` | Merge the PR. Toggle `d` to delete the branch, then `m` merge commit or `s` squash opens the commit message (subject on the first line, body below) for editing; `⌘+j` merges. `r` rebase asks for `y` to confirm |
 | `X` | Close the PR without merging (optionally deleting the branch), or reopen a closed PR, after a `y` confirmation |
 | `C` | Post a general comment on the PR |
 | `o` | Open the PR in the browser |
@@ -136,22 +136,22 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 
 | Key | Action |
 | --- | --- |
-| `ctrl+m` (also `ctrl+s`) | Submit |
+| `⌘+j` (also `ctrl+s`) | Submit |
 | `esc` | Cancel |
 
 `enter` inserts a newline. An approval may be submitted with an empty body.
 Every other comment or review needs text.
 
-`ctrl+m` is only reported as its own key when the terminal speaks the kitty
-keyboard protocol (Ghostty, kitty, WezTerm, recent iTerm2); in a plain
-terminal it is the same byte as Enter and just inserts a newline, so use
-`ctrl+s` there. Inside tmux, enable extended keys so the protocol is passed
-through:
+The Command key only reaches terminal apps when the terminal speaks the kitty
+keyboard protocol (Ghostty, kitty, WezTerm, recent iTerm2). Inside tmux, enable
+extended keys so the protocol is passed through:
 
 ```
 set -s extended-keys on
 set -as terminal-features 'xterm*:extkeys'
 ```
+
+Where Command is not reported, use `ctrl+s`.
 
 Run `ghpr --debug-keys ...` to see the name of every key your terminal sends
 in the status bar.
