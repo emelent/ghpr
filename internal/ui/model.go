@@ -691,6 +691,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.moveCursor(m.viewportH() / 2)
 	case "ctrl+u", "pgup":
 		m.moveCursor(-m.viewportH() / 2)
+	case "ctrl+f":
+		m.moveCursor(m.viewportH())
+	case "ctrl+b":
+		m.moveCursor(-m.viewportH())
 	case "g", "home":
 		m.cursor = 0
 		m.scroll = 0
@@ -788,6 +792,10 @@ func (m *Model) handleFilesKey(key string) (bool, tea.Cmd) {
 			return true, m.selectFile(m.fileIdx + 1)
 		case "k", "up":
 			return true, m.selectFile(m.fileIdx - 1)
+		case "g", "home":
+			return true, m.selectFile(0)
+		case "G", "end":
+			return true, m.selectFile(len(m.files) - 1)
 		case "enter", "space":
 			m.filesFocused = false
 			return true, nil
@@ -799,8 +807,7 @@ func (m *Model) handleFilesKey(key string) (bool, tea.Cmd) {
 	}
 	idx := m.treeIndex()
 	node := &m.treeNodes[idx]
-	move := func(d int) tea.Cmd {
-		n := idx + d
+	moveTo := func(n int) tea.Cmd {
 		if n < 0 || n >= len(m.treeNodes) {
 			return nil
 		}
@@ -810,11 +817,16 @@ func (m *Model) handleFilesKey(key string) (bool, tea.Cmd) {
 		}
 		return nil
 	}
+	move := func(d int) tea.Cmd { return moveTo(idx + d) }
 	switch key {
 	case "j", "down":
 		return true, move(1)
 	case "k", "up":
 		return true, move(-1)
+	case "g", "home":
+		return true, moveTo(0)
+	case "G", "end":
+		return true, moveTo(len(m.treeNodes) - 1)
 	case "enter", "space":
 		if node.isDir {
 			m.collapsed[node.path] = !m.collapsed[node.path]

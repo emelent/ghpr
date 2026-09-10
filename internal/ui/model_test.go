@@ -882,3 +882,57 @@ func TestCloseReopen(t *testing.T) {
 		t.Fatal("reopening a merged PR should be refused")
 	}
 }
+
+func TestTopBottomKeys(t *testing.T) {
+	m := newTreeModel(t)
+	press := func(k string) {
+		switch k {
+		case "tab":
+			m.handleKey(tea.KeyPressMsg{Code: tea.KeyTab})
+		case "ctrl+f", "ctrl+b":
+			m.handleKey(tea.KeyPressMsg{Code: rune(k[5]), Mod: tea.ModCtrl})
+		default:
+			m.handleKey(tea.KeyPressMsg{Code: rune(k[0]), Text: k})
+		}
+	}
+	// Tree mode: G selects the last node (README.md), g the first (a directory).
+	press("tab")
+	press("G")
+	if m.treeSel != "README.md" || m.files[m.fileIdx].Path() != "README.md" {
+		t.Fatalf("G in tree: sel=%q file=%s", m.treeSel, m.files[m.fileIdx].Path())
+	}
+	press("g")
+	if m.treeSel != "cmd/x/deep" {
+		t.Fatalf("g in tree should select the first node, got %q", m.treeSel)
+	}
+	// Flat mode: g/G select first/last file.
+	press("t")
+	press("G")
+	if m.fileIdx != len(m.files)-1 {
+		t.Fatalf("G flat -> last file, got %d", m.fileIdx)
+	}
+	press("g")
+	if m.fileIdx != 0 {
+		t.Fatalf("g flat -> first file, got %d", m.fileIdx)
+	}
+	// Diff pane: g/G and full-page keys.
+	press("tab")
+	d := newTestModel(t)
+	d.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
+	d.handleKey(tea.KeyPressMsg{Code: 'G', Text: "G"})
+	if d.cursor != len(d.rows)-1 {
+		t.Fatal("G -> last row")
+	}
+	d.handleKey(tea.KeyPressMsg{Code: 'g', Text: "g"})
+	if d.cursor != 0 {
+		t.Fatal("g -> first row")
+	}
+	d.handleKey(tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl})
+	if d.cursor != d.viewportH() {
+		t.Fatalf("ctrl+f should move a full page (%d), got %d", d.viewportH(), d.cursor)
+	}
+	d.handleKey(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl})
+	if d.cursor != 0 {
+		t.Fatal("ctrl+b should move back a full page")
+	}
+}

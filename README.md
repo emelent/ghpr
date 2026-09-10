@@ -98,7 +98,8 @@ Press `?` inside the app for this list.
 | --- | --- |
 | `j` / `k`, `↓` / `↑` | Move cursor |
 | `ctrl+d` / `ctrl+u`, `pgdn` / `pgup`, `space` | Half page down / up |
-| `g` / `G` | Top / bottom of file |
+| `ctrl+f` / `ctrl+b` | Full page down / up |
+| `g` / `G` | Top / bottom of the file, of the file list when it is focused, or of the PR list |
 | `]` / `[`, `l` / `h` | Next / previous file |
 | `J` / `K` | Next / previous change in the file |
 | `n` / `N` | Next / previous review thread (crosses files) |

@@ -607,7 +607,8 @@ func (m *Model) renderHelp(width, height int) []string {
 	rows := [][2]string{
 		{"j / k, ↓ / ↑", "move cursor"},
 		{"ctrl+d / ctrl+u, pgdn / pgup", "half page"},
-		{"g / G", "top / bottom"},
+		{"ctrl+f / ctrl+b", "full page"},
+		{"g / G", "top / bottom (diff, file list or PR list)"},
 		{"] / [", "next / previous file"},
 		{"J / K", "next / previous change in the file"},
 		{"n / N", "next / previous review thread"},
