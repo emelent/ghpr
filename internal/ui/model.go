@@ -103,8 +103,10 @@ type Model struct {
 	fatal error
 }
 
-// New creates a model. If number is 0 a PR picker is shown first.
-func New(client *gh.Client, number int, theme string) *Model {
+// New creates a model. If number is 0 a PR picker is shown first. syntax is
+// the chroma style used for highlighting; call ApplyTheme beforehand to pick
+// the UI palette.
+func New(client *gh.Client, number int, syntax string) *Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(colWarn).Background(colBarBg)
@@ -124,7 +126,7 @@ func New(client *gh.Client, number int, theme string) *Model {
 	m := &Model{
 		client:    client,
 		number:    number,
-		hl:        NewHighlighter(theme),
+		hl:        NewHighlighter(syntax),
 		spinner:   sp,
 		ta:        ta,
 		showFiles: true,

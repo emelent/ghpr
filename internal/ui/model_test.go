@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"ghpr/internal/diff"
@@ -321,5 +322,25 @@ func TestReplySubmitDoesNotPanic(t *testing.T) {
 	}
 	if m.overlay != overlayNone || m.busy == "" {
 		t.Fatalf("input should close and a loader should show; overlay=%v busy=%q", m.overlay, m.busy)
+	}
+}
+
+func TestApplyTheme(t *testing.T) {
+	t.Cleanup(func() { _ = ApplyTheme(DefaultTheme) })
+	if err := ApplyTheme("nope"); err == nil {
+		t.Fatal("unknown theme should error")
+	}
+	if err := ApplyTheme("solarized-dark"); err != nil {
+		t.Fatal(err)
+	}
+	if colAppBg != lipgloss.Color("#002b36") || styTitle.GetForeground() != lipgloss.Color("#eee8d5") {
+		t.Fatalf("solarized palette not applied")
+	}
+	m := newTestModel(t)
+	if !strings.Contains(m.View().Content, "\x1b[") {
+		t.Fatalf("themed view should carry colour")
+	}
+	if got := ThemeNames(); len(got) < 2 || got[0] != "github-dark" {
+		t.Fatalf("theme names: %v", got)
 	}
 }

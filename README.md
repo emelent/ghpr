@@ -63,12 +63,19 @@ ghpr https://github.com/owner/repo/pull/42
 | Flag | Description |
 | --- | --- |
 | `-R, --repo owner/name` | Repository to use (default: repository of the current directory) |
-| `-t, --theme name` | Chroma syntax theme (default `catppuccin-mocha`, or `GHPR_THEME` env var) |
+| `-t, --theme name` | UI theme: `github-dark` (default) or `solarized-dark`. Env: `GHPR_THEME` |
+| `--syntax name` | Chroma style for syntax highlighting. Defaults to the theme's pairing (`catppuccin-mocha` for github-dark, `solarized-dark` for solarized-dark). Env: `GHPR_SYNTAX` |
 | `-s, --split` | Start in side-by-side mode |
 | `-h, --help` | Show help |
 
-Any chroma style name works for `--theme`, for example `dracula`, `github-dark`,
-`monokai`, `nord`, `solarized-dark`.
+Any chroma style name works for `--syntax`, for example `dracula`, `github-dark`,
+`monokai`, `nord`, `solarized-dark`. To use Solarized Dark everywhere:
+
+```sh
+ghpr -t solarized-dark 42
+# or persist it
+export GHPR_THEME=solarized-dark
+```
 
 ## Key bindings
 

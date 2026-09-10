@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -23,21 +24,23 @@ Without a PR reference an interactive picker lists open pull requests.
 
 Flags:
   -R, --repo owner/name   repository (default: repository of the current directory)
-  -t, --theme name        chroma syntax theme (default: catppuccin-mocha, env GHPR_THEME)
+  -t, --theme name        UI theme: %s (default: %s, env GHPR_THEME)
+  --syntax name           chroma style for syntax highlighting (default: the theme's own, env GHPR_SYNTAX)
   -s, --split             start in side-by-side mode
   -h, --help              show this help
 
 Keys inside the app: press ? for the full list.
-`)
+`, strings.Join(ui.ThemeNames(), ", "), ui.DefaultTheme)
 }
 
 func main() {
-	var repo, theme string
+	var repo, theme, syntax string
 	var split, help bool
 	flag.StringVar(&repo, "R", "", "")
 	flag.StringVar(&repo, "repo", "", "")
 	flag.StringVar(&theme, "t", os.Getenv("GHPR_THEME"), "")
 	flag.StringVar(&theme, "theme", os.Getenv("GHPR_THEME"), "")
+	flag.StringVar(&syntax, "syntax", os.Getenv("GHPR_SYNTAX"), "")
 	flag.BoolVar(&split, "s", false, "")
 	flag.BoolVar(&split, "split", false, "")
 	flag.BoolVar(&help, "h", false, "")
@@ -47,6 +50,18 @@ func main() {
 	if help {
 		usage()
 		return
+	}
+
+	if err := ui.ApplyTheme(theme); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if syntax == "" {
+		t, _ := ui.LookupTheme(theme)
+		if theme == "" {
+			t, _ = ui.LookupTheme(ui.DefaultTheme)
+		}
+		syntax = t.Syntax
 	}
 
 	number := 0
@@ -71,7 +86,7 @@ func main() {
 		repo = r
 	}
 
-	model := ui.New(&gh.Client{Repo: repo}, number, theme)
+	model := ui.New(&gh.Client{Repo: repo}, number, syntax)
 	model.SetSplit(split)
 	p := tea.NewProgram(model)
 	final, err := p.Run()
