@@ -2,10 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -30,6 +31,7 @@ var (
 	colThreadBg = lipgloss.Color("#0f141a")
 	colThreadCu = lipgloss.Color("#1e2733")
 	colBorder   = lipgloss.Color("#30363d")
+	colAppBg    = lipgloss.Color("#0d1117")
 
 	styTitle    = lipgloss.NewStyle().Bold(true).Foreground(colText)
 	styDim      = lipgloss.NewStyle().Foreground(colDim)
@@ -79,7 +81,7 @@ func padRight(s string, w int) string {
 }
 
 // padRightBg pads with a background-styled filler.
-func padRightBg(s string, w int, bg lipgloss.TerminalColor) string {
+func padRightBg(s string, w int, bg color.Color) string {
 	if w <= 0 {
 		return ""
 	}

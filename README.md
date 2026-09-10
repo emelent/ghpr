@@ -1,7 +1,8 @@
 # ghpr
 
 Review GitHub pull requests in the terminal. `ghpr` is a Go TUI built on
-[bubbletea](https://github.com/charmbracelet/bubbletea) that uses the
+[bubbletea v2](https://github.com/charmbracelet/bubbletea) (with bubbles v2 and
+lipgloss v2, imported from their `charm.land/...` module paths) that uses the
 [GitHub CLI](https://cli.github.com) (`gh`) for all data and actions, so it
 reuses your existing `gh` login and works with any host `gh` is configured for.
 

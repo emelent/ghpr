@@ -2,9 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"ghpr/internal/diff"
@@ -12,7 +13,7 @@ import (
 )
 
 // lineBg returns the background for a diff line kind.
-func lineBg(k diff.Kind, selected bool) lipgloss.TerminalColor {
+func lineBg(k diff.Kind, selected bool) color.Color {
 	switch k {
 	case diff.Add:
 		if selected {
@@ -31,7 +32,7 @@ func lineBg(k diff.Kind, selected bool) lipgloss.TerminalColor {
 	return lipgloss.NoColor{}
 }
 
-func signOf(k diff.Kind) (string, lipgloss.TerminalColor) {
+func signOf(k diff.Kind) (string, color.Color) {
 	switch k {
 	case diff.Add:
 		return "+", colAddFg
@@ -63,7 +64,7 @@ func (m *Model) renderUnified(l *diff.Line, selected bool, width, numW int) stri
 // renderHalf renders "num ± content" for one side of a split row.
 func (m *Model) renderHalf(l *diff.Line, selected bool, width, numW int) string {
 	if l == nil {
-		bg := lipgloss.TerminalColor(lipgloss.NoColor{})
+		bg := color.Color(lipgloss.NoColor{})
 		if selected {
 			bg = colCtxCurBg
 		}
@@ -83,7 +84,7 @@ func (m *Model) renderHalf(l *diff.Line, selected bool, width, numW int) string 
 
 // renderThread renders a review thread as a bordered block.
 func renderThread(t *gh.Thread, selected bool, width int) []string {
-	bg := lipgloss.TerminalColor(colThreadBg)
+	bg := color.Color(colThreadBg)
 	if selected {
 		bg = colThreadCu
 	}

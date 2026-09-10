@@ -1,12 +1,13 @@
 package ui
 
 import (
+	"image/color"
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
-	"github.com/charmbracelet/lipgloss"
 
 	"ghpr/internal/diff"
 )
@@ -148,7 +149,7 @@ func (h *Highlighter) HighlightFile(f *diff.File) map[*diff.Line][]Span {
 }
 
 // renderSpans renders spans onto a background, truncating/padding to width.
-func renderSpans(spans []Span, bg lipgloss.TerminalColor, width int) string {
+func renderSpans(spans []Span, bg color.Color, width int) string {
 	if width <= 0 {
 		return ""
 	}

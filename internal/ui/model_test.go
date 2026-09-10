@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"ghpr/internal/diff"
@@ -60,7 +60,7 @@ func TestViewDimensions(t *testing.T) {
 	for _, split := range []bool{false, true} {
 		m.split = split
 		m.rebuildRows()
-		out := lines(m.View())
+		out := lines(m.View().Content)
 		if len(out) != 30 {
 			t.Fatalf("split=%v want 30 lines, got %d", split, len(out))
 		}
@@ -74,7 +74,7 @@ func TestViewDimensions(t *testing.T) {
 
 func TestThreadsInterleaved(t *testing.T) {
 	m := newTestModel(t)
-	plain := ansi.Strip(m.View())
+	plain := ansi.Strip(m.View().Content)
 	if !strings.Contains(plain, "@alice") || !strings.Contains(plain, "↳ @bob") {
 		t.Fatalf("thread not rendered:\n%s", plain)
 	}
@@ -159,39 +159,39 @@ func TestJumpThreadAcrossFiles(t *testing.T) {
 func TestInputFlow(t *testing.T) {
 	m := newTestModel(t)
 	m.cursor = 5 // add line -> RIGHT 3
-	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m.handleKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
 	if m.overlay != overlayInput || m.inSide != "RIGHT" || m.inLine != 3 || m.inPath != "main.go" {
 		t.Fatalf("comment input not opened: %+v", m.overlay)
 	}
-	out := lines(m.View())
+	out := lines(m.View().Content)
 	if len(out) != 30 {
 		t.Fatalf("with input want 30 lines got %d", len(out))
 	}
-	if !strings.Contains(ansi.Strip(m.View()), "New comment on main.go:3 (RIGHT)") {
+	if !strings.Contains(ansi.Strip(m.View().Content), "New comment on main.go:3 (RIGHT)") {
 		t.Fatalf("title missing")
 	}
 	// Empty submit is rejected.
-	m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m.handleKey(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if m.overlay != overlayInput || !m.statusErr {
 		t.Fatalf("empty body should be rejected")
 	}
-	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.overlay != overlayNone {
 		t.Fatalf("esc should close")
 	}
 	// Reply requires a thread row.
 	m.cursor = 4
-	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m.handleKey(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	if m.overlay != overlayInput || m.inThread == nil || m.inThread.ID != "T2" {
 		t.Fatalf("reply not opened")
 	}
-	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 	// Review menu.
-	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m.handleKey(tea.KeyPressMsg{Code: 'v', Text: "v"})
 	if m.overlay != overlayReview {
 		t.Fatalf("review menu")
 	}
-	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m.handleKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	if m.overlay != overlayInput || m.inEvent != gh.Approve {
 		t.Fatalf("approve input")
 	}
@@ -202,19 +202,19 @@ func TestNarrowAndHelp(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 60, Height: 15})
 	m.split = true
 	m.rebuildRows()
-	for _, l := range lines(m.View()) {
+	for _, l := range lines(m.View().Content) {
 		if ansi.StringWidth(l) != 60 {
 			t.Fatalf("narrow width mismatch: %q", ansi.Strip(l))
 		}
 	}
 	m.overlay = overlayHelp
-	if len(lines(m.View())) != 15 {
+	if len(lines(m.View().Content)) != 15 {
 		t.Fatalf("help height")
 	}
 	m.showFiles = false
 	m.overlay = overlayNone
 	m.invalidateLayout()
-	for _, l := range lines(m.View()) {
+	for _, l := range lines(m.View().Content) {
 		if ansi.StringWidth(l) != 60 {
 			t.Fatalf("no-files width mismatch: %q", ansi.Strip(l))
 		}
@@ -239,7 +239,7 @@ func TestScrollFollowsCursor(t *testing.T) {
 func TestReplySubmitDoesNotPanic(t *testing.T) {
 	m := newTestModel(t)
 	m.cursor = 4 // thread T2
-	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m.handleKey(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	if m.overlay != overlayInput || m.inThread == nil {
 		t.Fatalf("reply input not opened")
 	}

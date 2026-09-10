@@ -3,14 +3,15 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"ghpr/internal/diff"
 	"ghpr/internal/gh"
@@ -113,9 +114,12 @@ func New(client *gh.Client, number int, theme string) *Model {
 	ta.Prompt = "┃ "
 	ta.CharLimit = 0
 	ta.SetHeight(inputPanelH - 3)
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	ta.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(colWarn)
-	ta.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(colDim)
+	ta.SetVirtualCursor(true)
+	tas := ta.Styles()
+	tas.Focused.CursorLine = lipgloss.NewStyle()
+	tas.Focused.Prompt = lipgloss.NewStyle().Foreground(colWarn)
+	tas.Blurred.Prompt = lipgloss.NewStyle().Foreground(colDim)
+	ta.SetStyles(tas)
 
 	m := &Model{
 		client:    client,
@@ -351,7 +355,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 
@@ -377,7 +381,7 @@ func (m *Model) Fatal() error { return m.fatal }
 
 // ---------- keys ----------
 
-func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if key == "ctrl+c" {
 		return m, tea.Quit
@@ -483,7 +487,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.filesFocused {
 			m.filesFocused = false
 		}
-	case "ctrl+d", "pgdown", " ":
+	case "ctrl+d", "pgdown", "space":
 		m.moveCursor(m.viewportH() / 2)
 	case "ctrl+u", "pgup":
 		m.moveCursor(-m.viewportH() / 2)
@@ -787,8 +791,16 @@ func (m *Model) submitInput() tea.Cmd {
 
 // ---------- view ----------
 
-// View renders the UI.
-func (m *Model) View() string {
+// View renders the UI into a full-screen bubbletea view.
+func (m *Model) View() tea.View {
+	v := tea.NewView(m.view())
+	v.AltScreen = true
+	v.BackgroundColor = color.Color(colAppBg)
+	return v
+}
+
+// view renders the UI as a string.
+func (m *Model) view() string {
 	if m.width == 0 {
 		return "loading…"
 	}

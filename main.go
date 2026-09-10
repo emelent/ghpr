@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"ghpr/internal/gh"
 	"ghpr/internal/ui"
@@ -73,7 +73,7 @@ func main() {
 
 	model := ui.New(&gh.Client{Repo: repo}, number, theme)
 	model.SetSplit(split)
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model)
 	final, err := p.Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
