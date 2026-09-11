@@ -686,6 +686,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"o", "open the PR in the browser"},
 		{"R", "refresh PR, diff and threads"},
 		{"⌘+j / esc", "submit / cancel text entry (ctrl+s also submits)"},
+		{"mouse", "click a line to move the cursor, drag or shift+click to select lines, wheel to scroll; click a file or folder in the file list; click a PR in the list, twice to open"},
 		{"?", "toggle this help"},
 		{"b / backspace", "back to the pull request list"},
 		{"q", "back to the list when opened from it, otherwise quit"},

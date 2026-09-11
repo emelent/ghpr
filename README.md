@@ -113,6 +113,8 @@ Press `?` inside the app for this list.
 | `f` | Show / hide the file list |
 | `t` | File list as a directory tree (default) or a flat list |
 
+The mouse works too: click a line to move the cursor there, drag (or `shift`+click) to select a range for a multi-line comment, and use the wheel to scroll. In the file list, click a file to open it or a folder to fold / unfold it, and the wheel moves through the list. In the pull request list, click a PR to select it and click it again to open it.
+
 When the file panel is focused in tree mode: `j`/`k` move through directories and files, `enter`, `space` or `l` on a file opens it and returns focus to the diff; on a directory `enter`/`space` toggle it, `l` expands and `h` collapses (`h` on a file jumps to its directory), `H`/`L` collapse / expand everything. From the diff, `h` brings you back to the tree. Collapsed directories show file, viewed and change counts.
 | `s` | Toggle inline / side-by-side diff |
 | `m` | Mark / unmark the current file as viewed. Marking moves focus to the file tree so you can pick the next file. When every file in a folder is viewed the folder folds, and so do its parents up to the first folder with unviewed files. Fully viewed folders start folded when you open the PR. Viewed files show a ✓ in the file list and the header shows when you viewed them |

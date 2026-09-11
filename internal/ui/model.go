@@ -68,8 +68,10 @@ type Model struct {
 	overlay       overlayKind
 
 	// picker
-	list      list.Model
-	listState string // open, closed, merged or all
+	list        list.Model
+	listState   string // open, closed, merged or all
+	listItemH   int    // lines per list item (delegate height)
+	listItemGap int    // blank lines between items (delegate spacing)
 
 	fromPicker bool   // the PR was opened from the list; q returns to it
 	debugKeys  bool   // show every key name in the status bar
@@ -118,8 +120,11 @@ type Model struct {
 	maxLineW  int  // widest line in the current file view
 	selecting bool // visual line selection active
 	selAnchor int  // row index where the selection started
-	spans     map[*diff.Line][]Span
-	spanCache map[int]map[*diff.Line][]Span
+	// mouse drag in progress (left button held after a click on a row)
+	dragging   bool
+	dragAnchor int
+	spans      map[*diff.Line][]Span
+	spanCache  map[int]map[*diff.Line][]Span
 
 	// in-file search
 	searchQ     string // active query ("" = none); matches are highlighted
@@ -200,6 +205,7 @@ func New(client *gh.Client, number int, syntax string) *Model {
 	d.Styles.SelectedDesc = d.Styles.SelectedDesc.Foreground(colDim).BorderForeground(colAccent)
 	l := list.New(nil, d, 0, 0)
 	m.listState = "open"
+	m.listItemH, m.listItemGap = d.Height(), d.Spacing()
 	l.Title = m.listTitle()
 	l.Styles.Title = lipgloss.NewStyle().Background(colSelBg).Foreground(colText).Padding(0, 1)
 	l.SetShowStatusBar(true)
@@ -483,6 +489,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.login = msg.login
 		return m, nil
 
+	case tea.MouseClickMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg, tea.MouseMotionMsg:
+		return m.handleMouse(msg)
+
 	case clearStatusMsg:
 		if msg.seq == m.statusSeq {
 			m.status = ""
@@ -630,13 +639,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case "s":
 				return m, m.cycleListState()
 			case "enter", "l", "right":
-				if it, ok := m.list.SelectedItem().(prItem); ok {
-					m.number = it.s.Number
-					m.screen = screenDiff
-					m.fromPicker = true
-					m.restoreLast = true
-					return m, m.loadAll()
-				}
+				return m, m.openSelectedPR()
 			}
 		}
 		var cmd tea.Cmd
@@ -1537,6 +1540,19 @@ func (m *Model) toggleResolve() tea.Cmd {
 	return m.action("Resolve thread", true, func() error { return m.client.ResolveThread(t.ID) })
 }
 
+// openSelectedPR leaves the picker for the highlighted pull request.
+func (m *Model) openSelectedPR() tea.Cmd {
+	it, ok := m.list.SelectedItem().(prItem)
+	if !ok {
+		return nil
+	}
+	m.number = it.s.Number
+	m.screen = screenDiff
+	m.fromPicker = true
+	m.restoreLast = true
+	return m.loadAll()
+}
+
 // backToList leaves the diff view for the PR picker and refreshes it.
 func (m *Model) backToList() tea.Cmd {
 	m.savePosition()
@@ -1657,6 +1673,7 @@ func (m *Model) submitInput() tea.Cmd {
 func (m *Model) View() tea.View {
 	v := tea.NewView(m.view())
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	v.BackgroundColor = color.Color(colAppBg)
 	return v
 }
