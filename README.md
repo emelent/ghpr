@@ -103,6 +103,7 @@ Press `?` inside the app for this list.
 | `ctrl+f` / `ctrl+b` | Full page down / up |
 | `g` / `G` | Top / bottom of the file, of the file list when it is focused, or of the PR list |
 | `]` / `[` | Next / previous file |
+| `ctrl+p`, `/` in the file list | Fuzzy-find a file. Type part of the path (spaces are ignored, so `cmd main` finds `cmd/x/main.go`), `↑`/`↓` or `ctrl+j`/`ctrl+k` choose, `enter` opens, `esc` cancels |
 | `l` | Scroll the diff right when lines are wider than the pane; in the file tree, open the selected file |
 | `h` | Scroll the diff back left; at the left edge, move focus to the file tree |
 | `J` / `K` | Next / previous change in the file |

@@ -573,6 +573,9 @@ func (m *Model) renderStatus(width int) string {
 		left = styBar.Render(" Submit review: ") + styBarKey.Render("a") + styBar.Render(" approve  ") +
 			styBarKey.Render("r") + styBar.Render(" request changes  ") + styBarKey.Render("c") + styBar.Render(" comment  ") +
 			styBarKey.Render("esc") + styBar.Render(" cancel")
+	case m.overlay == overlayFiles:
+		left = styBar.Render(" Go to file: type to filter  ") + styBarKey.Render("↑/↓") + styBar.Render(" choose  ") +
+			styBarKey.Render("enter") + styBar.Render(" open  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
 	case m.overlay == overlaySearch:
 		count := ""
 		if m.searchInput != "" {
@@ -659,6 +662,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"J / K", "next / previous change in the file"},
 		{"n / N", "next / previous review thread; next / previous match while a search is active"},
 		{"/", "search the file (case-insensitive unless the query has capitals); enter keeps the match, esc cancels"},
+		{"ctrl+p, / (file list)", "fuzzy-find a file by path: type to filter, ↑/↓ (ctrl+j/k) choose, enter open"},
 		{"esc", "cancel the line selection, otherwise clear the search"},
 		{"tab", "focus file list / diff"},
 		{"h / l", "diff: scroll left / right when lines overflow; h at the left edge goes to the file tree"},

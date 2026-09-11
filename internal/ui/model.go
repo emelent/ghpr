@@ -36,6 +36,7 @@ const (
 	overlayDelete // delete a review comment
 	overlayEdit   // pick a review comment to edit
 	overlaySearch // typing a / search query
+	overlayFiles  // fuzzy file picker
 	overlayHelp
 )
 
@@ -125,6 +126,12 @@ type Model struct {
 	searchInput string // text being typed in the / prompt
 	searchPrev  string // query to restore when the prompt is cancelled
 	searchFrom  int    // cursor row when the prompt opened
+
+	// fuzzy file picker
+	fpQuery   string
+	fpResults []fpMatch
+	fpIdx     int // selected result
+	fpScroll  int // first visible result
 
 	// full-file view
 	full        bool               // show whole files instead of hunks
@@ -680,6 +687,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case overlaySearch:
 		return m.handleSearchKey(msg)
 
+	case overlayFiles:
+		return m.handleFilePickerKey(msg)
+
 	case overlayState:
 		switch key {
 		case "d":
@@ -825,8 +835,14 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.showFiles = true
 		m.filesFocused = true
 		m.invalidateLayout()
+	case "ctrl+p":
+		m.openFilePicker()
 	case "/":
-		m.openSearch()
+		if m.filesFocused {
+			m.openFilePicker()
+		} else {
+			m.openSearch()
+		}
 	case "n":
 		if m.searchQ != "" {
 			return m, m.searchStep(1)
@@ -1659,9 +1675,12 @@ func (m *Model) view() string {
 	dw := m.diffWidth()
 
 	var right []string
-	if m.overlay == overlayHelp {
+	switch {
+	case m.overlay == overlayHelp:
 		right = m.renderHelp(dw, mainH)
-	} else {
+	case m.overlay == overlayFiles:
+		right = m.renderFilePicker(dw, mainH)
+	default:
 		diffH := mainH
 		if m.overlay == overlayInput {
 			diffH -= inputPanelH
