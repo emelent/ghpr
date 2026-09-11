@@ -37,6 +37,7 @@ const (
 	overlayEdit   // pick a review comment to edit
 	overlaySearch // typing a / search query
 	overlayFiles  // fuzzy file picker
+	overlayGlobal // search across every file (ctrl+/)
 	overlayHelp
 )
 
@@ -131,6 +132,12 @@ type Model struct {
 	searchInput string // text being typed in the / prompt
 	searchPrev  string // query to restore when the prompt is cancelled
 	searchFrom  int    // cursor row when the prompt opened
+
+	// search across all files
+	gsQuery   string
+	gsResults []gsHit
+	gsIdx     int // selected hit
+	gsScroll  int // first visible hit
 
 	// fuzzy file picker
 	fpQuery   string
@@ -653,9 +660,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.closeInput()
 			return m, nil
-		case "super+j", "meta+j", "ctrl+s":
-			// cmd+j on macOS (reported as super/meta by terminals that
-			// speak the kitty keyboard protocol); ctrl+s works everywhere.
+		case "ctrl+s", "super+j", "meta+j":
+			// ctrl+s submits; super/meta+j is kept as a quiet extra for
+			// terminals that report cmd+j through the kitty protocol.
 			return m, m.submitInput()
 		}
 		var cmd tea.Cmd
@@ -692,6 +699,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case overlayFiles:
 		return m.handleFilePickerKey(msg)
+
+	case overlayGlobal:
+		return m.handleGlobalSearchKey(msg)
 
 	case overlayState:
 		switch key {
@@ -840,6 +850,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.invalidateLayout()
 	case "ctrl+p":
 		m.openFilePicker()
+	case "ctrl+/", "ctrl+_": // legacy terminals report ctrl+/ as ctrl+_
+		m.openGlobalSearch()
 	case "/":
 		if m.filesFocused {
 			m.openFilePicker()
@@ -1697,6 +1709,8 @@ func (m *Model) view() string {
 		right = m.renderHelp(dw, mainH)
 	case m.overlay == overlayFiles:
 		right = m.renderFilePicker(dw, mainH)
+	case m.overlay == overlayGlobal:
+		right = m.renderGlobalSearch(dw, mainH)
 	default:
 		diffH := mainH
 		if m.overlay == overlayInput {

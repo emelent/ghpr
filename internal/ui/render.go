@@ -576,6 +576,9 @@ func (m *Model) renderStatus(width int) string {
 	case m.overlay == overlayFiles:
 		left = styBar.Render(" Go to file: type to filter  ") + styBarKey.Render("↑/↓") + styBar.Render(" choose  ") +
 			styBarKey.Render("enter") + styBar.Render(" open  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
+	case m.overlay == overlayGlobal:
+		left = styBar.Render(" Search all files: type to search  ") + styBarKey.Render("↑/↓") + styBar.Render(" choose  ") +
+			styBarKey.Render("enter") + styBar.Render(" jump  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
 	case m.overlay == overlaySearch:
 		count := ""
 		if m.searchInput != "" {
@@ -609,9 +612,9 @@ func (m *Model) renderStatus(width int) string {
 	var right string
 	switch {
 	case m.overlay == overlayInput && m.inKind == inputMerge:
-		right = styBarKey.Render("⌘+j") + styBarDim.Render(" merge  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
+		right = styBarKey.Render("ctrl+s") + styBarDim.Render(" merge  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
 	case m.overlay == overlayInput:
-		right = styBarKey.Render("⌘+j") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
+		right = styBarKey.Render("ctrl+s") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
 	case m.screen == screenPicker:
 		right = styBarKey.Render("enter/l") + styBarDim.Render(" open  ") + styBarKey.Render("s") + styBarDim.Render(" state: "+m.listState+"  ") +
 			styBarKey.Render("/") + styBarDim.Render(" filter  ") + styBarKey.Render("q") + styBarDim.Render(" quit ")
@@ -661,7 +664,8 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"] / [", "next / previous file"},
 		{"J / K", "next / previous change in the file"},
 		{"n / N", "next / previous review thread; next / previous match while a search is active"},
-		{"/", "search the file (case-insensitive unless the query has capitals); enter keeps the match, esc cancels"},
+		{"/", "search the file (case-insensitive); enter keeps the match, esc cancels"},
+		{"ctrl+/", "search every file in the diff, exact hits first then fuzzy: ↑/↓ (ctrl+j/k) choose, enter jumps to the line"},
 		{"ctrl+p, / (file list)", "fuzzy-find a file by path: type to filter, ↑/↓ (ctrl+j/k) choose, enter open"},
 		{"esc", "cancel the line selection, otherwise clear the search"},
 		{"tab", "focus file list / diff"},
@@ -685,7 +689,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"C", "comment on the PR (general)"},
 		{"o", "open the PR in the browser"},
 		{"R", "refresh PR, diff and threads"},
-		{"⌘+j / esc", "submit / cancel text entry (ctrl+s also submits)"},
+		{"ctrl+s / esc", "submit / cancel text entry"},
 		{"mouse", "click a line to move the cursor, drag or shift+click to select lines, wheel to scroll; click a file or folder in the file list; click a PR in the list, twice to open"},
 		{"?", "toggle this help"},
 		{"b / backspace", "back to the pull request list"},

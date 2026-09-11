@@ -108,7 +108,8 @@ Press `?` inside the app for this list.
 | `h` | Scroll the diff back left; at the left edge, move focus to the file tree |
 | `J` / `K` | Next / previous change in the file |
 | `n` / `N` | Next / previous review thread (crosses files); next / previous match while a search is active |
-| `/` | Search the current file. Matching ignores case unless the query has capitals. The cursor follows as you type; `enter` keeps the match, `esc` goes back. Hits are highlighted and `n` / `N` step through them; `esc` clears the search |
+| `/` | Search the current file, ignoring case. The cursor follows as you type; `enter` keeps the match, `esc` goes back. Hits are highlighted and `n` / `N` step through them; `esc` clears the search |
+| `ctrl+/` | Search every file in the diff, ignoring case. Lines containing the text exactly are listed first, then fuzzy hits where the characters appear in order (so `fprint` finds `fmt.Println`). Results show `path:line` and the matching text; `↑`/`↓` or `ctrl+j`/`ctrl+k` choose, `enter` jumps to that line, `esc` cancels. After jumping to an exact hit the query stays active as the in-file search so `n` / `N` work there |
 | `tab` | Switch focus between file list and diff |
 | `f` | Show / hide the file list |
 | `t` | File list as a directory tree (default) or a flat list |
@@ -129,9 +130,9 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 | `r` | Reply to the thread under the cursor |
 | `x` | Resolve / unresolve the thread under the cursor |
 | `d` | Delete one of your comments in the thread under the cursor. The newest is preselected; `j`/`k` pick another, `y` confirms |
-| `e` | Edit one of your comments in the thread under the cursor. Pick it like `d`, then `y` opens the editor pre-filled with the current text; `⌘+j` saves |
+| `e` | Edit one of your comments in the thread under the cursor. Pick it like `d`, then `y` opens the editor pre-filled with the current text; `ctrl+s` saves |
 | `v` | Submit a review, then `a` approve, `r` request changes, `c` comment |
-| `M` | Merge the PR. Toggle `d` to delete the branch, then `m` merge commit or `s` squash opens the commit message (subject on the first line, body below) for editing; `⌘+j` merges. `r` rebase asks for `y` to confirm |
+| `M` | Merge the PR. Toggle `d` to delete the branch, then `m` merge commit or `s` squash opens the commit message (subject on the first line, body below) for editing; `ctrl+s` merges. `r` rebase asks for `y` to confirm |
 | `X` | Close the PR without merging (optionally deleting the branch), or reopen a closed PR, after a `y` confirmation |
 | `C` | Post a general comment on the PR |
 | `o` | Open the PR in the browser |
@@ -141,22 +142,21 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 
 | Key | Action |
 | --- | --- |
-| `⌘+j` (also `ctrl+s`) | Submit |
+| `ctrl+s` | Submit |
 | `esc` | Cancel |
 
 `enter` inserts a newline. An approval may be submitted with an empty body.
 Every other comment or review needs text.
 
-The Command key only reaches terminal apps when the terminal speaks the kitty
-keyboard protocol (Ghostty, kitty, WezTerm, recent iTerm2). Inside tmux, enable
-extended keys so the protocol is passed through:
+`⌘+j` also submits in terminals that speak the kitty keyboard protocol
+(Ghostty, kitty, WezTerm, recent iTerm2), which is the only way the Command key
+reaches terminal apps. Inside tmux, enable extended keys so the protocol is
+passed through:
 
 ```
 set -s extended-keys on
 set -as terminal-features 'xterm*:extkeys'
 ```
-
-Where Command is not reported, use `ctrl+s`.
 
 Run `ghpr --debug-keys ...` to see the name of every key your terminal sends
 in the status bar.

@@ -95,7 +95,7 @@ func (m *Model) findMatch(from, dir int, inclusive bool) int {
 	return -1
 }
 
-// rowMatches reports whether the diff text on row i contains the query.
+// rowMatches reports whether the diff text on row i matches the query.
 func (m *Model) rowMatches(i int) bool {
 	if i < 0 || i >= len(m.rows) || m.searchQ == "" {
 		return false
@@ -134,17 +134,16 @@ func (m *Model) lineSpans(l *diff.Line) []Span {
 	return markSpans(sp, m.searchQ)
 }
 
-// findMatches returns the [start, end) rune ranges where q occurs in text.
-// Matching ignores case unless q contains an upper-case letter (smart case).
+// findMatches returns the [start, end) rune ranges where q occurs in text,
+// ignoring case. nil means no match.
 func findMatches(text, q string) [][2]int {
 	if q == "" {
 		return nil
 	}
 	tr, qr := []rune(text), []rune(q)
-	fold := !strings.ContainsFunc(q, unicode.IsUpper)
 	var out [][2]int
 	for i := 0; i+len(qr) <= len(tr); {
-		if runesMatchAt(tr, qr, i, fold) {
+		if runesMatchAt(tr, qr, i) {
 			out = append(out, [2]int{i, i + len(qr)})
 			i += len(qr)
 			continue
@@ -154,28 +153,28 @@ func findMatches(text, q string) [][2]int {
 	return out
 }
 
-func runesMatchAt(text, q []rune, at int, fold bool) bool {
+func runesMatchAt(text, q []rune, at int) bool {
 	for j, r := range q {
-		t := text[at+j]
-		if t == r {
-			continue
+		if t := text[at+j]; t != r && unicode.ToLower(t) != unicode.ToLower(r) {
+			return false
 		}
-		if fold && unicode.ToLower(t) == unicode.ToLower(r) {
-			continue
-		}
-		return false
 	}
 	return true
 }
 
-// markSpans splits spans so every occurrence of q is its own span with
-// Match set, so it can be drawn with the search highlight.
+// markSpans splits spans so every match of q is its own span with Match
+// set, so it can be drawn with the search highlight.
 func markSpans(spans []Span, q string) []Span {
 	var sb strings.Builder
 	for _, sp := range spans {
 		sb.WriteString(sp.Text)
 	}
-	ranges := findMatches(sb.String(), q)
+	return markRanges(spans, findMatches(sb.String(), q))
+}
+
+// markRanges splits spans at the given rune ranges (over the concatenated
+// span text) and flags the pieces inside them as matches.
+func markRanges(spans []Span, ranges [][2]int) []Span {
 	if len(ranges) == 0 {
 		return spans
 	}

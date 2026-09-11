@@ -16,8 +16,8 @@ func TestFindMatches(t *testing.T) {
 		want    [][2]int
 	}{
 		{`import "fmt"`, "fmt", [][2]int{{8, 11}}},
-		{"Fmt fmt FMT", "fmt", [][2]int{{0, 3}, {4, 7}, {8, 11}}},  // smart case: all lower folds
-		{"Fmt fmt FMT", "Fmt", [][2]int{{0, 3}}},                   // capitals: exact
+		{"Fmt fmt FMT", "fmt", [][2]int{{0, 3}, {4, 7}, {8, 11}}},  // case-insensitive
+		{"Fmt fmt FMT", "FMT", [][2]int{{0, 3}, {4, 7}, {8, 11}}},  // in both directions
 		{"aaaa", "aa", [][2]int{{0, 2}, {2, 4}}},                   // non-overlapping
 		{"héllo wörld héllo", "héllo", [][2]int{{0, 5}, {12, 17}}}, // rune offsets
 		{"abc", "", nil},
@@ -145,11 +145,17 @@ func TestSearch(t *testing.T) {
 	if m.cursor != 6 || m.searchQ != "fmt" || m.overlay != overlayNone {
 		t.Fatalf("esc restores: cursor=%d q=%q", m.cursor, m.searchQ)
 	}
-	// Smart case: capitals make the search exact.
+	// Case is ignored; a query with no hits reports it.
 	press("/")
 	typeText("FMT")
 	press("enter")
-	if !m.statusErr || !strings.Contains(m.status, "No match for “FMT”") {
+	if m.cursor != 6 || m.searchQ != "FMT" {
+		t.Fatalf("FMT should match fmt on the current row 6: cursor=%d", m.cursor)
+	}
+	press("/")
+	typeText("zzz")
+	press("enter")
+	if !m.statusErr || !strings.Contains(m.status, "No match for “zzz”") {
 		t.Fatalf("expected no-match status, got %q", m.status)
 	}
 	// Selection takes esc first; the search survives it.
