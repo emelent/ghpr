@@ -135,7 +135,7 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 | `M` | Merge the PR. Toggle `d` to delete the branch, then `m` merge commit or `s` squash opens the commit message (subject on the first line, body below) for editing; `ctrl+s` merges. `r` rebase asks for `y` to confirm |
 | `X` | Close the PR without merging (optionally deleting the branch), or reopen a closed PR, after a `y` confirmation |
 | `C` | Post a general comment on the PR |
-| `o` | Open the current file in Neovim (see below); does nothing unless an editor is listening for this PR |
+| `o` | Open the current file at the cursor's line in Neovim (see below); does nothing unless an editor is listening for this PR |
 | `O` | Open the PR in the browser |
 | `R` | Refresh PR, diff and threads |
 
@@ -151,9 +151,12 @@ nvim --listen /tmp/nvim.$id.sock
 ```
 
 Pressing `o` while reviewing that PR runs `nvim --server /tmp/nvim.$id.sock
---remote ./path/to/file` for the file under the cursor and switches the tmux
-session to the `code` window. When the socket does not exist nothing happens;
-outside tmux only the file is sent.
+--remote-send '<C-\><C-n>:e +LINE ./path/to/file<CR>'` for the file under the
+cursor, where `LINE` is the cursor's line in the new version of the file (for a
+removed line, the nearest line that still exists), and switches the tmux
+session to the `code` window. The leading keys return Neovim to normal mode
+first, so it works from insert mode too. When the socket does not exist
+nothing happens; outside tmux only the file is sent.
 
 ### Text entry
 

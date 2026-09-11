@@ -1401,8 +1401,8 @@ func TestOpenInEditor(t *testing.T) {
 	var opened []string
 	server := false
 	editorHasServer = func(id string) bool { return server && id == "PR_test7" }
-	editorOpen = func(id string, path string) error {
-		opened = append(opened, fmt.Sprintf("%s:%s", id, path))
+	editorOpen = func(id string, path string, line int) error {
+		opened = append(opened, fmt.Sprintf("%s:%s:%d", id, path, line))
 		return nil
 	}
 	t.Cleanup(func() { editorHasServer, editorOpen = editor.HasServer, editor.Open })
@@ -1414,20 +1414,37 @@ func TestOpenInEditor(t *testing.T) {
 	if cmd := press("o"); cmd != nil || m.busy != "" || m.status != "" {
 		t.Fatalf("o without a server should be silent: busy=%q status=%q", m.busy, m.status)
 	}
-	// With a server the current file is handed over.
+	// With a server the current file and line are handed over. Row 6 is the
+	// added `"fmt"` line, new line 4.
 	server = true
+	m.cursor = 6
 	cmd := press("o")
 	if cmd == nil || !strings.Contains(m.busy, "Open in nvim") {
 		t.Fatalf("o should open in nvim: busy=%q", m.busy)
 	}
 	runBatch(cmd)
-	if !reflect.DeepEqual(opened, []string{"PR_test7:main.go"}) {
+	if !reflect.DeepEqual(opened, []string{"PR_test7:main.go:4"}) {
 		t.Fatalf("opened = %v", opened)
+	}
+	// A removed line has no new-side number: the next row that does is used
+	// (row 3 `-import "fmt"` -> row 5 `+import (`, new line 3). A thread on
+	// the right side uses its own line; the hunk header its new start.
+	m.busy = ""
+	m.cursor = 3
+	runBatch(press("o"))
+	m.busy = ""
+	m.cursor = 7 // thread T1 at RIGHT:4
+	runBatch(press("o"))
+	m.busy = ""
+	m.cursor = 0
+	runBatch(press("o"))
+	if want := []string{"PR_test7:main.go:4", "PR_test7:main.go:3", "PR_test7:main.go:4", "PR_test7:main.go:1"}; !reflect.DeepEqual(opened, want) {
+		t.Fatalf("opened = %v\nwant %v", opened, want)
 	}
 	m.busy = ""
 	m.selectFile(1)
 	runBatch(press("o"))
-	if len(opened) != 2 || opened[1] != "PR_test7:b.py" {
+	if last := opened[len(opened)-1]; last != "PR_test7:b.py:1" {
 		t.Fatalf("opened = %v", opened)
 	}
 	// O opens the browser.

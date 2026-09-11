@@ -1569,11 +1569,51 @@ func (m *Model) openInEditor() tea.Cmd {
 	if m.busy != "" || m.pr == nil || len(m.files) == 0 {
 		return nil
 	}
-	id, path := m.pr.ID, m.files[m.fileIdx].Path()
+	id, path, line := m.pr.ID, m.files[m.fileIdx].Path(), m.currentNewLine()
 	if !editorHasServer(id) {
 		return nil
 	}
-	return m.action("Open in nvim", false, func() error { return editorOpen(id, path) })
+	return m.action("Open in nvim", false, func() error { return editorOpen(id, path, line) })
+}
+
+// currentNewLine is the line in the current (head) version of the file that
+// the cursor is on, or 0 when unknown. Rows without a new-side line (removed
+// lines, threads on the old side, notes) borrow the first row below that has
+// one, which is where the removed text used to sit, and failing that the
+// nearest row above.
+func (m *Model) currentNewLine() int {
+	n := len(m.rows)
+	if n == 0 {
+		return 0
+	}
+	newLine := func(r *row) int {
+		switch r.kind {
+		case rowHunk:
+			return r.hunk.NewStart
+		case rowThread:
+			if r.thread.DiffSide == "RIGHT" {
+				return r.thread.Line
+			}
+		default:
+			_, nn, _ := r.nums()
+			return nn
+		}
+		return 0
+	}
+	if l := newLine(&m.rows[m.cursor]); l > 0 {
+		return l
+	}
+	for i := m.cursor + 1; i < n; i++ {
+		if l := newLine(&m.rows[i]); l > 0 {
+			return l
+		}
+	}
+	for i := m.cursor - 1; i >= 0; i-- {
+		if l := newLine(&m.rows[i]); l > 0 {
+			return l
+		}
+	}
+	return 0
 }
 
 // openSelectedPR leaves the picker for the highlighted pull request.

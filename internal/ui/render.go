@@ -687,7 +687,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"M", "merge the PR: m / s open the commit message to edit, r rebase, d delete branch"},
 		{"X", "close the PR without merging, or reopen a closed PR"},
 		{"C", "comment on the PR (general)"},
-		{"o", "open the current file in Neovim listening on /tmp/nvim.<pr node id>.sock and switch to the tmux window \"code\" (no socket: nothing happens)"},
+		{"o", "open the current file at the cursor line in Neovim listening on /tmp/nvim.<pr node id>.sock and switch to the tmux window \"code\" (no socket: nothing happens)"},
 		{"O", "open the PR in the browser"},
 		{"R", "refresh PR, diff and threads"},
 		{"ctrl+s / esc", "submit / cancel text entry"},

@@ -36,11 +36,37 @@ func RelPath(path string) string {
 	return "./" + strings.TrimPrefix(strings.TrimPrefix(path, "./"), "/")
 }
 
-// Open asks the Neovim listening on the PR's socket to edit path, then, when
-// running inside tmux, switches the current session to the editor window.
-func Open(id string, path string) error {
-	if out, err := execCommand("nvim", "--server", SockPath(id), "--remote", RelPath(path)).CombinedOutput(); err != nil {
-		return fmt.Errorf("nvim --remote: %s", firstLine(out, err))
+// EditKeys is the key sequence sent to Neovim to open path at line (1-based;
+// 0 leaves the cursor alone): drop to normal mode from whatever mode the
+// editor is in, then `:e +line ./path`.
+func EditKeys(path string, line int) string {
+	at := ""
+	if line > 0 {
+		at = fmt.Sprintf("+%d ", line)
+	}
+	return `<C-\><C-n>:e ` + at + escapeCmdArg(RelPath(path)) + "<CR>"
+}
+
+// escapeCmdArg backslash-escapes the characters that would otherwise be
+// special in an Ex command argument (like Neovim's fnameescape()).
+func escapeCmdArg(s string) string {
+	const special = " \t\"#%*[|`\\"
+	var sb strings.Builder
+	for _, r := range s {
+		if strings.ContainsRune(special, r) {
+			sb.WriteByte('\\')
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
+}
+
+// Open asks the Neovim listening on the PR's socket to edit path, placing
+// the cursor on line (1-based; 0 leaves it alone), then, when running inside
+// tmux, switches the current session to the editor window.
+func Open(id string, path string, line int) error {
+	if out, err := execCommand("nvim", "--server", SockPath(id), "--remote-send", EditKeys(path, line)).CombinedOutput(); err != nil {
+		return fmt.Errorf("nvim --remote-send: %s", firstLine(out, err))
 	}
 	if os.Getenv("TMUX") == "" {
 		return nil
