@@ -19,7 +19,7 @@ var (
 	colAddFg, colDelFg, colNumFg, colDim, colAccent           color.Color
 	colWarn, colOK, colErr, colText                           color.Color
 	colPanelBg, colBarBg, colSelBg, colThreadBg, colThreadCu  color.Color
-	colBorder, colAppBg                                       color.Color
+	colBorder, colAppBg, colMatchBg, colMatchFg               color.Color
 
 	styTitle, styDim, styAccent, styWarn, styOK, styErr          lipgloss.Style
 	styBar, styBarKey, styBarDim, styHunk, styHunkCur, styBorder lipgloss.Style

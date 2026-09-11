@@ -23,6 +23,7 @@ type Theme struct {
 	AddCurBg, DelCurBg, CtxCurBg     string // row under the cursor
 	AddSelBg, DelSelBg, CtxSelBg     string // rows in a visual selection
 	FileSelBg, ThreadBg, ThreadCurBg string
+	MatchBg, MatchFg                 string // search hits
 }
 
 // DefaultTheme is used when no theme is requested.
@@ -39,6 +40,7 @@ var themes = map[string]Theme{
 		AddCurBg: "#1f5a35", DelCurBg: "#6b2027", CtxCurBg: "#2c3140",
 		AddSelBg: "#1a4a3a", DelSelBg: "#5a2a3a", CtxSelBg: "#23304a",
 		FileSelBg: "#264f78", ThreadBg: "#0f141a", ThreadCurBg: "#1e2733",
+		MatchBg: "#e3b341", MatchFg: "#0d1117",
 	},
 	// Ethan Schoonover's Solarized Dark: base03 background, base0/base1
 	// text, accents from the canonical eight hues. Diff backgrounds are the
@@ -53,6 +55,7 @@ var themes = map[string]Theme{
 		AddCurBg: "#2f5a22", DelCurBg: "#632e33", CtxCurBg: "#0c4a5a",
 		AddSelBg: "#254c28", DelSelBg: "#4d2d34", CtxSelBg: "#083c4a",
 		FileSelBg: "#1a5f8a", ThreadBg: "#00212b", ThreadCurBg: "#073642",
+		MatchBg: "#b58900", MatchFg: "#002b36",
 	},
 }
 
@@ -91,6 +94,7 @@ func ApplyTheme(name string) error {
 	colAddCurBg, colDelCurBg, colCtxCurBg = c(t.AddCurBg), c(t.DelCurBg), c(t.CtxCurBg)
 	colAddSelBg, colDelSelBg, colCtxSelBg = c(t.AddSelBg), c(t.DelSelBg), c(t.CtxSelBg)
 	colSelBg, colThreadBg, colThreadCu = c(t.FileSelBg), c(t.ThreadBg), c(t.ThreadCurBg)
+	colMatchBg, colMatchFg = c(t.MatchBg), c(t.MatchFg)
 	rebuildStyles()
 	return nil
 }

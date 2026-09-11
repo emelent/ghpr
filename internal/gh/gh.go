@@ -393,6 +393,15 @@ func (c *Client) DeleteReviewComment(commentID int64) error {
 	return err
 }
 
+// EditReviewComment replaces the body of a review comment (by REST id).
+// Only the author may do so; GitHub rejects it otherwise.
+func (c *Client) EditReviewComment(commentID int64, body string) error {
+	payload, _ := json.Marshal(map[string]any{"body": body})
+	endpoint := fmt.Sprintf("repos/%s/pulls/comments/%d", c.Repo, commentID)
+	_, err := run(payload, "api", "-X", "PATCH", endpoint, "--input", "-")
+	return err
+}
+
 // ReplyToComment replies to an existing review comment (by REST id).
 func (c *Client) ReplyToComment(number int, commentID int64, body string) error {
 	payload, _ := json.Marshal(map[string]any{"body": body})

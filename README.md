@@ -106,7 +106,8 @@ Press `?` inside the app for this list.
 | `l` | Scroll the diff right when lines are wider than the pane; in the file tree, open the selected file |
 | `h` | Scroll the diff back left; at the left edge, move focus to the file tree |
 | `J` / `K` | Next / previous change in the file |
-| `n` / `N` | Next / previous review thread (crosses files) |
+| `n` / `N` | Next / previous review thread (crosses files); next / previous match while a search is active |
+| `/` | Search the current file. Matching ignores case unless the query has capitals. The cursor follows as you type; `enter` keeps the match, `esc` goes back. Hits are highlighted and `n` / `N` step through them; `esc` clears the search |
 | `tab` | Switch focus between file list and diff |
 | `f` | Show / hide the file list |
 | `t` | File list as a directory tree (default) or a flat list |
@@ -125,6 +126,7 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 | `r` | Reply to the thread under the cursor |
 | `x` | Resolve / unresolve the thread under the cursor |
 | `d` | Delete one of your comments in the thread under the cursor. The newest is preselected; `j`/`k` pick another, `y` confirms |
+| `e` | Edit one of your comments in the thread under the cursor. Pick it like `d`, then `y` opens the editor pre-filled with the current text; `⌘+j` saves |
 | `v` | Submit a review, then `a` approve, `r` request changes, `c` comment |
 | `M` | Merge the PR. Toggle `d` to delete the branch, then `m` merge commit or `s` squash opens the commit message (subject on the first line, body below) for editing; `⌘+j` merges. `r` rebase asks for `y` to confirm |
 | `X` | Close the PR without merging (optionally deleting the branch), or reopen a closed PR, after a `y` confirmation |
@@ -187,7 +189,7 @@ Every operation shells out to `gh`:
 - `gh pr list`, `gh pr view`, `gh pr diff` for reading
 - `gh pr review`, `gh pr comment` for reviews and PR comments
 - `gh pr merge`, `gh pr close`, `gh pr reopen` for merging, closing and reopening
-- `gh api` (REST) for creating line comments and replies
+- `gh api` (REST) for creating, editing and deleting line comments and replies
 - `gh api graphql` for fetching review threads and resolving/unresolving them
 
 ## Releases

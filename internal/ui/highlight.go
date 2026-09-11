@@ -20,6 +20,7 @@ type Span struct {
 	Bold      bool
 	Italic    bool
 	Underline bool
+	Match     bool // part of a search hit; drawn with the match colours
 }
 
 // Highlighter tokenises source text with chroma and maps tokens to spans.
@@ -179,6 +180,9 @@ func renderSpans(spans []Span, bg color.Color, width, skip int) string {
 		st := lipgloss.NewStyle().Background(bg)
 		if sp.Fg != "" {
 			st = st.Foreground(lipgloss.Color(sp.Fg))
+		}
+		if sp.Match {
+			st = st.Background(colMatchBg).Foreground(colMatchFg)
 		}
 		if sp.Bold {
 			st = st.Bold(true)

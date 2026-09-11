@@ -1286,15 +1286,15 @@ func TestDeleteComment(t *testing.T) {
 	// Thread T1 (row 7): alice then bob -> bob's reply is offered.
 	m.cursor = 7
 	press("d")
-	if m.overlay != overlayDelete || len(m.delChoices) != 1 || m.delChoices[0].Author != "bob" {
-		t.Fatalf("delete overlay should target bob's comment: %v", m.delChoices)
+	if m.overlay != overlayDelete || len(m.pickChoices) != 1 || m.pickChoices[0].Author != "bob" {
+		t.Fatalf("delete overlay should target bob's comment: %v", m.pickChoices)
 	}
 	plain := ansi.Strip(m.View().Content)
 	if !strings.Contains(plain, "Delete @bob's comment “Style.”?") || !strings.Contains(plain, "✗ delete?") {
 		t.Fatalf("confirmation and marker missing:\n%s", plain)
 	}
 	press("n")
-	if m.overlay != overlayNone || m.deleteTarget() != nil {
+	if m.overlay != overlayNone || m.pickTarget() != nil {
 		t.Fatal("n cancels")
 	}
 	press("d")
@@ -1305,16 +1305,91 @@ func TestDeleteComment(t *testing.T) {
 	// Unknown login: every comment is offered, newest preselected, j/k choose.
 	m.login = ""
 	press("d")
-	if len(m.delChoices) != 2 || m.delIdx != 1 || m.deleteTarget().Author != "bob" {
-		t.Fatalf("all comments offered, newest first: %d %d", len(m.delChoices), m.delIdx)
+	if len(m.pickChoices) != 2 || m.pickIdx != 1 || m.pickTarget().Author != "bob" {
+		t.Fatalf("all comments offered, newest first: %d %d", len(m.pickChoices), m.pickIdx)
 	}
 	press("k")
-	if m.deleteTarget().Author != "alice" || !strings.Contains(ansi.Strip(m.View().Content), "choose (1/2)") {
+	if m.pickTarget().Author != "alice" || !strings.Contains(ansi.Strip(m.View().Content), "choose (1/2)") {
 		t.Fatal("k should move to alice's comment")
 	}
 	press("esc")
 	if m.overlay != overlayNone {
 		t.Fatal("esc cancels")
+	}
+}
+
+func TestEditComment(t *testing.T) {
+	m := newTestModel(t)
+	m.Update(userMsg{login: "bob"})
+	press := func(k string) tea.Cmd {
+		var msg tea.KeyPressMsg
+		switch k {
+		case "esc":
+			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
+		case "ctrl+s":
+			msg = tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
+		default:
+			msg = tea.KeyPressMsg{Code: rune(k[0]), Text: k}
+		}
+		_, cmd := m.handleKey(msg)
+		return cmd
+	}
+	// Not on a thread.
+	m.cursor = 1
+	press("e")
+	if m.overlay != overlayNone || !strings.Contains(m.status, "to edit a comment") {
+		t.Fatalf("e off a thread should be refused, status=%q", m.status)
+	}
+	// Thread T2 (row 4): nothing of bob's.
+	m.cursor = 4
+	press("e")
+	if m.overlay != overlayNone || !strings.Contains(m.status, "No comment of yours") {
+		t.Fatalf("expected refusal, status=%q", m.status)
+	}
+	// Thread T1 (row 7): bob's reply is offered with an edit marker.
+	m.cursor = 7
+	press("e")
+	if m.overlay != overlayEdit || len(m.pickChoices) != 1 || m.pickTarget().Author != "bob" {
+		t.Fatalf("edit picker should target bob's comment: %v", m.pickChoices)
+	}
+	plain := ansi.Strip(m.View().Content)
+	if !strings.Contains(plain, "Edit @bob's comment “Style.”?") || !strings.Contains(plain, "✎ edit?") || strings.Contains(plain, "delete?") {
+		t.Fatalf("edit prompt and marker missing:\n%s", plain)
+	}
+	press("n")
+	if m.overlay != overlayNone || m.pickTarget() != nil {
+		t.Fatal("n cancels")
+	}
+	// y opens the editor pre-filled with the current body.
+	press("e")
+	press("y")
+	if m.overlay != overlayInput || m.inKind != inputEdit || m.inEditID != 2 || m.ta.Value() != "Style." {
+		t.Fatalf("y should open the editor with the body: overlay=%v kind=%v id=%d value=%q", m.overlay, m.inKind, m.inEditID, m.ta.Value())
+	}
+	if !strings.Contains(m.inputTitle, "Edit @bob's comment on main.go:4") {
+		t.Fatalf("title=%q", m.inputTitle)
+	}
+	// Emptying the body is refused; otherwise submit edits with a loader.
+	m.ta.SetValue("")
+	press("ctrl+s")
+	if m.overlay != overlayInput || !strings.Contains(m.status, "empty") {
+		t.Fatal("empty edit should be refused")
+	}
+	m.ta.SetValue("Style nit.")
+	if cmd := press("ctrl+s"); cmd == nil || m.overlay != overlayNone || !strings.Contains(m.busy, "Edit comment") {
+		t.Fatalf("submit should edit with a loader: busy=%q", m.busy)
+	}
+	m.busy = ""
+	// The picker keys also work under e, and e closes it again.
+	m.login = ""
+	press("e")
+	press("k")
+	if m.pickTarget().Author != "alice" || !strings.Contains(ansi.Strip(m.View().Content), "choose (1/2)") {
+		t.Fatal("k should move to alice's comment")
+	}
+	press("e")
+	if m.overlay != overlayNone {
+		t.Fatal("e toggles the picker closed")
 	}
 }
 

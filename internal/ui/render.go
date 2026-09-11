@@ -75,7 +75,7 @@ func (m *Model) renderUnified(l *diff.Line, st rowState, width, numW int) string
 		numStr(l.OldNum, numW) + " " + numStr(l.NewNum, numW) + " ")
 	sg := lipgloss.NewStyle().Background(bg).Foreground(signFg).Bold(true).Render(sign + " ")
 	gutW := numW*2 + 4
-	content := renderSpans(m.spans[l], bg, width-gutW, m.hscroll)
+	content := renderSpans(m.lineSpans(l), bg, width-gutW, m.hscroll)
 	return gut + sg + content
 }
 
@@ -94,11 +94,12 @@ func (m *Model) renderHalf(l *diff.Line, st rowState, width, numW int) string {
 	gut := lipgloss.NewStyle().Background(bg).Foreground(colNumFg).Render(numStr(n, numW) + " ")
 	sg := lipgloss.NewStyle().Background(bg).Foreground(signFg).Bold(true).Render(sign + " ")
 	gutW := numW + 3
-	return gut + sg + renderSpans(m.spans[l], bg, width-gutW, m.hscroll)
+	return gut + sg + renderSpans(m.lineSpans(l), bg, width-gutW, m.hscroll)
 }
 
-// renderThread renders a review thread as a bordered block.
-func renderThread(t *gh.Thread, selected bool, width int, target *gh.Comment) []string {
+// renderThread renders a review thread. target, when non-nil, is the comment
+// currently selected in the picker and is flagged with mark.
+func renderThread(t *gh.Thread, selected bool, width int, target *gh.Comment, mark string) []string {
 	bg := color.Color(colThreadBg)
 	if selected {
 		bg = colThreadCu
@@ -146,7 +147,7 @@ func renderThread(t *gh.Thread, selected bool, width int, target *gh.Comment) []
 		author := base.Foreground(colAccent).Bold(true).Render(prefix + "@" + c.Author)
 		when := base.Foreground(colDim).Render("  " + ago(c.CreatedAt))
 		if target != nil && &t.Comments[i] == target {
-			when += base.Foreground(colErr).Bold(true).Render("  ✗ delete?")
+			when += base.Foreground(colErr).Bold(true).Render(mark)
 		}
 		emit(author + when)
 		body := strings.TrimSpace(strings.ReplaceAll(c.Body, "\r", ""))
@@ -191,7 +192,11 @@ func (m *Model) renderRow(r *row, st rowState, width, numW int) []string {
 		}
 		return []string{m.renderHalf(r.left, st, lw, numW) + sep + m.renderHalf(r.right, st, rw, numW)}
 	case rowThread:
-		return renderThread(r.thread, selected, width, m.deleteTarget())
+		mark := "  ✗ delete?"
+		if m.overlay == overlayEdit {
+			mark = "  ✎ edit?"
+		}
+		return renderThread(r.thread, selected, width, m.pickTarget(), mark)
 	}
 	return []string{padRight("", width)}
 }
@@ -205,7 +210,7 @@ func (m *Model) rowHeight(i int) int {
 	if h, ok := m.threadH[i]; ok {
 		return h
 	}
-	h := len(renderThread(r.thread, false, m.diffWidth(), nil))
+	h := len(renderThread(r.thread, false, m.diffWidth(), nil, ""))
 	m.threadH[i] = h
 	return h
 }
@@ -536,18 +541,22 @@ func (m *Model) renderStatus(width int) string {
 				styBarKey.Render("s") + styBar.Render(" squash  ") + styBarKey.Render("r") + styBar.Render(" rebase  ") +
 				styBarKey.Render("d") + styBar.Render(" delete branch: "+del+"  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
 		}
-	case m.overlay == overlayDelete:
-		c := m.deleteTarget()
+	case m.overlay == overlayDelete || m.overlay == overlayEdit:
+		c := m.pickTarget()
 		snippet := strings.Join(strings.Fields(c.Body), " ")
 		if len(snippet) > 40 {
 			snippet = snippet[:40] + "…"
 		}
 		pick := ""
-		if len(m.delChoices) > 1 {
-			pick = styBarKey.Render("j/k") + styBar.Render(fmt.Sprintf(" choose (%d/%d)  ", m.delIdx+1, len(m.delChoices)))
+		if len(m.pickChoices) > 1 {
+			pick = styBarKey.Render("j/k") + styBar.Render(fmt.Sprintf(" choose (%d/%d)  ", m.pickIdx+1, len(m.pickChoices)))
 		}
-		left = styBar.Render(fmt.Sprintf(" Delete @%s's comment “%s”? ", c.Author, snippet)) +
-			styBarKey.Render("y") + styBar.Render(" confirm  ") + pick + styBarKey.Render("n") + styBar.Render(" cancel")
+		verb, confirm := "Delete", "confirm"
+		if m.overlay == overlayEdit {
+			verb, confirm = "Edit", "open editor"
+		}
+		left = styBar.Render(fmt.Sprintf(" %s @%s's comment “%s”? ", verb, c.Author, snippet)) +
+			styBarKey.Render("y") + styBar.Render(" "+confirm+"  ") + pick + styBarKey.Render("n") + styBar.Render(" cancel")
 	case m.overlay == overlayState:
 		if m.pr != nil && m.pr.State == "OPEN" {
 			del := "off"
@@ -564,6 +573,14 @@ func (m *Model) renderStatus(width int) string {
 		left = styBar.Render(" Submit review: ") + styBarKey.Render("a") + styBar.Render(" approve  ") +
 			styBarKey.Render("r") + styBar.Render(" request changes  ") + styBarKey.Render("c") + styBar.Render(" comment  ") +
 			styBarKey.Render("esc") + styBar.Render(" cancel")
+	case m.overlay == overlaySearch:
+		count := ""
+		if m.searchInput != "" {
+			_, total := m.matchPos()
+			count = styBarDim.Render(fmt.Sprintf("  %d match(es)  ", total))
+		}
+		left = styBar.Render(" /"+m.searchInput) + styBarKey.Render("▏") + count +
+			styBar.Render("  ") + styBarKey.Render("enter") + styBar.Render(" keep  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
 	case m.selecting && m.overlay == overlayNone:
 		left = styBar.Render(fmt.Sprintf(" %d line(s) selected  ", m.selectedLineCount())) +
 			styBarKey.Render("j/k") + styBar.Render(" extend  ") +
@@ -575,6 +592,14 @@ func (m *Model) renderStatus(width int) string {
 		} else {
 			left = lipgloss.NewStyle().Background(colBarBg).Foreground(colOK).Render(" ✓ " + m.status)
 		}
+	case m.searchQ != "" && m.overlay == overlayNone:
+		pos, total := m.matchPos()
+		where := fmt.Sprintf("%d match(es)", total)
+		if pos > 0 {
+			where = fmt.Sprintf("%d/%d", pos, total)
+		}
+		left = styBar.Render(" /"+m.searchQ) + styBarDim.Render("  "+where+"  ") +
+			styBarKey.Render("n/N") + styBar.Render(" next / prev  ") + styBarKey.Render("esc") + styBar.Render(" clear")
 	default:
 		left = styBar.Render(" ")
 	}
@@ -632,7 +657,9 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"g / G", "top / bottom (diff, file list or PR list)"},
 		{"] / [", "next / previous file"},
 		{"J / K", "next / previous change in the file"},
-		{"n / N", "next / previous review thread"},
+		{"n / N", "next / previous review thread; next / previous match while a search is active"},
+		{"/", "search the file (case-insensitive unless the query has capitals); enter keeps the match, esc cancels"},
+		{"esc", "cancel the line selection, otherwise clear the search"},
 		{"tab", "focus file list / diff"},
 		{"h / l", "diff: scroll left / right when lines overflow; h at the left edge goes to the file tree"},
 		{"l (file tree)", "open the selected file"},
@@ -647,6 +674,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"r", "reply to the thread under the cursor"},
 		{"x", "resolve / unresolve the thread under the cursor"},
 		{"d", "delete one of your comments in the thread under the cursor (y to confirm)"},
+		{"e", "edit one of your comments in the thread under the cursor (y opens the editor)"},
 		{"v", "submit a review (approve / request changes / comment)"},
 		{"M", "merge the PR: m / s open the commit message to edit, r rebase, d delete branch"},
 		{"X", "close the PR without merging, or reopen a closed PR"},

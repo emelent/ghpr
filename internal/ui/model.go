@@ -34,6 +34,8 @@ const (
 	overlayMerge
 	overlayState  // close / reopen confirmation
 	overlayDelete // delete a review comment
+	overlayEdit   // pick a review comment to edit
+	overlaySearch // typing a / search query
 	overlayHelp
 )
 
@@ -42,6 +44,7 @@ type inputKind int
 const (
 	inputComment inputKind = iota
 	inputReply
+	inputEdit
 	inputReview
 	inputPRComment
 	inputMerge
@@ -75,11 +78,11 @@ type Model struct {
 	mergeMethod gh.MergeMethod // chosen method awaiting confirmation ("" = none)
 	mergeDelete bool           // delete the head branch after merging
 
-	// comment deletion
-	login      string        // authenticated user, "" when unknown
-	delThread  *gh.Thread    // thread the deletion targets
-	delChoices []*gh.Comment // deletable comments in that thread
-	delIdx     int           // index into delChoices
+	// comment picker (delete / edit)
+	login       string        // authenticated user, "" when unknown
+	pickThread  *gh.Thread    // thread the pick targets
+	pickChoices []*gh.Comment // the user's comments in that thread
+	pickIdx     int           // index into pickChoices
 
 	// data
 	pr      *gh.PR
@@ -117,6 +120,12 @@ type Model struct {
 	spans     map[*diff.Line][]Span
 	spanCache map[int]map[*diff.Line][]Span
 
+	// in-file search
+	searchQ     string // active query ("" = none); matches are highlighted
+	searchInput string // text being typed in the / prompt
+	searchPrev  string // query to restore when the prompt is cancelled
+	searchFrom  int    // cursor row when the prompt opened
+
 	// full-file view
 	full        bool               // show whole files instead of hunks
 	fullFiles   map[int]*diff.File // expanded files by index
@@ -137,6 +146,7 @@ type Model struct {
 	inKind     inputKind
 	inComment  gh.LineComment
 	inThread   *gh.Thread
+	inEditID   int64 // review comment being edited (inputEdit)
 	inEvent    gh.ReviewEvent
 
 	fatal error
@@ -664,27 +674,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case overlayMerge:
 		return m.handleMergeKey(key)
 
-	case overlayDelete:
-		switch key {
-		case "j", "down":
-			if m.delIdx+1 < len(m.delChoices) {
-				m.delIdx++
-			}
-		case "k", "up":
-			if m.delIdx > 0 {
-				m.delIdx--
-			}
-		case "y", "enter":
-			c := m.delChoices[m.delIdx]
-			m.overlay = overlayNone
-			m.delThread, m.delChoices = nil, nil
-			id := c.DatabaseID
-			return m, m.action("Delete comment", true, func() error { return m.client.DeleteReviewComment(id) })
-		case "esc", "n", "q", "d":
-			m.overlay = overlayNone
-			m.delThread, m.delChoices = nil, nil
-		}
-		return m, nil
+	case overlayDelete, overlayEdit:
+		return m.handlePickKey(key)
+
+	case overlaySearch:
+		return m.handleSearchKey(msg)
 
 	case overlayState:
 		switch key {
@@ -749,7 +743,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.fileScroll = 0
 		m.revealFile(m.fileIdx)
 	case "esc":
-		m.clearSelection()
+		if m.selecting {
+			m.clearSelection()
+		} else {
+			m.searchQ = ""
+		}
 	case "V":
 		m.toggleSelection()
 	case "?":
@@ -827,9 +825,17 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.showFiles = true
 		m.filesFocused = true
 		m.invalidateLayout()
+	case "/":
+		m.openSearch()
 	case "n":
+		if m.searchQ != "" {
+			return m, m.searchStep(1)
+		}
 		return m, m.jumpThread(1)
 	case "N":
+		if m.searchQ != "" {
+			return m, m.searchStep(-1)
+		}
 		return m, m.jumpThread(-1)
 	case "c":
 		return m, m.startComment()
@@ -839,6 +845,39 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.toggleResolve()
 	case "d":
 		return m, m.startDelete()
+	case "e":
+		return m, m.startEdit()
+	}
+	return m, nil
+}
+
+// handlePickKey drives the comment picker shared by delete (d) and edit (e):
+// j/k choose one of the user's comments, y/enter acts on it.
+func (m *Model) handlePickKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "j", "down":
+		if m.pickIdx+1 < len(m.pickChoices) {
+			m.pickIdx++
+		}
+	case "k", "up":
+		if m.pickIdx > 0 {
+			m.pickIdx--
+		}
+	case "y", "enter":
+		c, t := m.pickChoices[m.pickIdx], m.pickThread
+		edit := m.overlay == overlayEdit
+		m.closePick()
+		if edit {
+			m.inEditID = c.DatabaseID
+			m.openInput(inputEdit, fmt.Sprintf("Edit @%s's comment on %s:%d", c.Author, t.Path, max(t.Line, t.OriginalLine)))
+			m.ta.SetValue(strings.ReplaceAll(c.Body, "\r", ""))
+			m.ta.MoveToEnd()
+			return m, nil
+		}
+		id := c.DatabaseID
+		return m, m.action("Delete comment", true, func() error { return m.client.DeleteReviewComment(id) })
+	case "esc", "n", "q", "d", "e":
+		m.closePick()
 	}
 	return m, nil
 }
@@ -1419,15 +1458,24 @@ func (m *Model) startReply() tea.Cmd {
 }
 
 // startDelete opens the delete confirmation for a comment in the thread
-// under the cursor. Only the user's own comments are offered when the login
-// is known; otherwise every comment is, and GitHub decides.
-func (m *Model) startDelete() tea.Cmd {
+// under the cursor.
+func (m *Model) startDelete() tea.Cmd { return m.startPick(overlayDelete, "delete") }
+
+// startEdit opens the comment picker for editing a comment in the thread
+// under the cursor; confirming opens the editor pre-filled with its body.
+func (m *Model) startEdit() tea.Cmd { return m.startPick(overlayEdit, "edit") }
+
+// startPick opens the comment picker (delete or edit) for the thread under
+// the cursor. Only the user's own comments are offered when the login is
+// known; otherwise every comment is, and GitHub decides. The newest is
+// preselected.
+func (m *Model) startPick(kind overlayKind, verb string) tea.Cmd {
 	if m.busy != "" {
 		return nil
 	}
 	r := m.currentRow()
 	if r == nil || r.kind != rowThread {
-		return m.setStatus("Move the cursor onto a thread to delete a comment", true)
+		return m.setStatus("Move the cursor onto a thread to "+verb+" a comment", true)
 	}
 	var choices []*gh.Comment
 	for i := range r.thread.Comments {
@@ -1439,17 +1487,23 @@ func (m *Model) startDelete() tea.Cmd {
 	if len(choices) == 0 {
 		return m.setStatus("No comment of yours in this thread (@"+m.login+")", true)
 	}
-	m.delThread, m.delChoices, m.delIdx = r.thread, choices, len(choices)-1
-	m.overlay = overlayDelete
+	m.pickThread, m.pickChoices, m.pickIdx = r.thread, choices, len(choices)-1
+	m.overlay = kind
 	return nil
 }
 
-// deleteTarget is the comment currently marked for deletion, if any.
-func (m *Model) deleteTarget() *gh.Comment {
-	if m.overlay != overlayDelete || m.delIdx >= len(m.delChoices) {
+// closePick dismisses the comment picker.
+func (m *Model) closePick() {
+	m.overlay = overlayNone
+	m.pickThread, m.pickChoices = nil, nil
+}
+
+// pickTarget is the comment currently selected in the picker, if any.
+func (m *Model) pickTarget() *gh.Comment {
+	if (m.overlay != overlayDelete && m.overlay != overlayEdit) || m.pickIdx >= len(m.pickChoices) {
 		return nil
 	}
-	return m.delChoices[m.delIdx]
+	return m.pickChoices[m.pickIdx]
 }
 
 func (m *Model) toggleResolve() tea.Cmd {
@@ -1477,6 +1531,7 @@ func (m *Model) backToList() tea.Cmd {
 	m.pending = 0
 	m.busy = ""
 	m.status = ""
+	m.searchQ = ""
 	m.clearSelection()
 	m.closeInput()
 	m.fromPicker = false
@@ -1564,6 +1619,9 @@ func (m *Model) submitInput() tea.Cmd {
 		}
 		id := thread.Comments[0].DatabaseID
 		return m.action("Post reply", true, func() error { return c.ReplyToComment(n, id, body) })
+	case inputEdit:
+		id := m.inEditID
+		return m.action("Edit comment", true, func() error { return c.EditReviewComment(id, body) })
 	case inputPRComment:
 		return m.action("Post PR comment", false, func() error { return c.Comment(n, body) })
 	case inputMerge:
