@@ -135,8 +135,25 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 | `M` | Merge the PR. Toggle `d` to delete the branch, then `m` merge commit or `s` squash opens the commit message (subject on the first line, body below) for editing; `ctrl+s` merges. `r` rebase asks for `y` to confirm |
 | `X` | Close the PR without merging (optionally deleting the branch), or reopen a closed PR, after a `y` confirmation |
 | `C` | Post a general comment on the PR |
-| `o` | Open the PR in the browser |
+| `o` | Open the current file in Neovim (see below); does nothing unless an editor is listening for this PR |
+| `O` | Open the PR in the browser |
 | `R` | Refresh PR, diff and threads |
+
+### Editing alongside Neovim
+
+Start Neovim in the repository with a server socket named after the pull
+request's GraphQL node id (not its number), in a tmux window called `code` in
+the same session as `ghpr`:
+
+```sh
+id=$(gh pr view 123 --json id -q .id)      # e.g. PR_kwDOPRY-OM8AAAABCBHOJc
+nvim --listen /tmp/nvim.$id.sock
+```
+
+Pressing `o` while reviewing that PR runs `nvim --server /tmp/nvim.$id.sock
+--remote ./path/to/file` for the file under the cursor and switches the tmux
+session to the `code` window. When the socket does not exist nothing happens;
+outside tmux only the file is sent.
 
 ### Text entry
 
@@ -227,4 +244,5 @@ Layout:
 - `main.go` – flag parsing and program start
 - `internal/gh` – `gh` wrapper: PR data, threads, comments, reviews
 - `internal/diff` – unified diff parser and side-by-side pairing
+- `internal/editor` – hands files to a listening Neovim and switches tmux windows
 - `internal/ui` – bubbletea model, rendering, syntax highlighting

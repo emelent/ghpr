@@ -14,8 +14,15 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"ghpr/internal/diff"
+	"ghpr/internal/editor"
 	"ghpr/internal/gh"
 	"ghpr/internal/state"
+)
+
+// Neovim hand-off (o); tests replace these.
+var (
+	editorHasServer = editor.HasServer
+	editorOpen      = editor.Open
 )
 
 type screen int
@@ -806,6 +813,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "R":
 		return m, m.loadAll()
 	case "o":
+		return m, m.openInEditor()
+	case "O":
 		return m, m.action("Open in browser", false, func() error { return m.client.OpenInBrowser(m.number) })
 	case "v":
 		if m.busy == "" {
@@ -1550,6 +1559,21 @@ func (m *Model) toggleResolve() tea.Cmd {
 		return m.action("Unresolve thread", true, func() error { return m.client.UnresolveThread(t.ID) })
 	}
 	return m.action("Resolve thread", true, func() error { return m.client.ResolveThread(t.ID) })
+}
+
+// openInEditor sends the current file to the Neovim listening on this PR's
+// socket (named after the PR's node id) and brings its tmux window forward.
+// Without a socket it does nothing, so the key is harmless when no editor
+// is set up.
+func (m *Model) openInEditor() tea.Cmd {
+	if m.busy != "" || m.pr == nil || len(m.files) == 0 {
+		return nil
+	}
+	id, path := m.pr.ID, m.files[m.fileIdx].Path()
+	if !editorHasServer(id) {
+		return nil
+	}
+	return m.action("Open in nvim", false, func() error { return editorOpen(id, path) })
 }
 
 // openSelectedPR leaves the picker for the highlighted pull request.

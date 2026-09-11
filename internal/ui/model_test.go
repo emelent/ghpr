@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"ghpr/internal/diff"
+	"ghpr/internal/editor"
 	"ghpr/internal/gh"
 	"ghpr/internal/state"
 )
@@ -41,7 +44,7 @@ func newTestModel(t *testing.T) *Model {
 	t.Helper()
 	m := New(&gh.Client{Repo: "o/r"}, 7, "")
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	m.pr = &gh.PR{Number: 7, Title: "Test PR", State: "OPEN", HeadRefName: "feat", BaseRefName: "main", HeadRefOid: "abc"}
+	m.pr = &gh.PR{ID: "PR_test7", Number: 7, Title: "Test PR", State: "OPEN", HeadRefName: "feat", BaseRefName: "main", HeadRefOid: "abc"}
 	m.pending = 2
 	m.Update(diffMsg{files: diff.Parse(sample)})
 	threads := []gh.Thread{
@@ -1390,6 +1393,61 @@ func TestEditComment(t *testing.T) {
 	press("e")
 	if m.overlay != overlayNone {
 		t.Fatal("e toggles the picker closed")
+	}
+}
+
+func TestOpenInEditor(t *testing.T) {
+	m := newTestModel(t)
+	var opened []string
+	server := false
+	editorHasServer = func(id string) bool { return server && id == "PR_test7" }
+	editorOpen = func(id string, path string) error {
+		opened = append(opened, fmt.Sprintf("%s:%s", id, path))
+		return nil
+	}
+	t.Cleanup(func() { editorHasServer, editorOpen = editor.HasServer, editor.Open })
+	press := func(k string) tea.Cmd {
+		_, cmd := m.handleKey(tea.KeyPressMsg{Code: rune(k[0]), Text: k})
+		return cmd
+	}
+	// No socket for this PR: o does nothing at all.
+	if cmd := press("o"); cmd != nil || m.busy != "" || m.status != "" {
+		t.Fatalf("o without a server should be silent: busy=%q status=%q", m.busy, m.status)
+	}
+	// With a server the current file is handed over.
+	server = true
+	cmd := press("o")
+	if cmd == nil || !strings.Contains(m.busy, "Open in nvim") {
+		t.Fatalf("o should open in nvim: busy=%q", m.busy)
+	}
+	runBatch(cmd)
+	if !reflect.DeepEqual(opened, []string{"PR_test7:main.go"}) {
+		t.Fatalf("opened = %v", opened)
+	}
+	m.busy = ""
+	m.selectFile(1)
+	runBatch(press("o"))
+	if len(opened) != 2 || opened[1] != "PR_test7:b.py" {
+		t.Fatalf("opened = %v", opened)
+	}
+	// O opens the browser.
+	m.busy = ""
+	press("O")
+	if !strings.Contains(m.busy, "Open in browser") {
+		t.Fatalf("O should open the browser: busy=%q", m.busy)
+	}
+}
+
+// runBatch executes the leaf commands of a tea.Batch synchronously.
+func runBatch(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		for _, c := range msg {
+			runBatch(c)
+		}
 	}
 }
 

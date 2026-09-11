@@ -23,6 +23,7 @@ type Client struct {
 
 // PR is the detailed view of a pull request.
 type PR struct {
+	ID             string `json:"id"` // GraphQL node id, e.g. PR_kwDOPRY-OM8AAAABCBHOJc
 	Number         int    `json:"number"`
 	Title          string `json:"title"`
 	Body           string `json:"body"`
@@ -182,7 +183,7 @@ func (c *Client) ListPRs(state string, limit int) ([]PRSummary, error) {
 // ViewPR fetches PR metadata.
 func (c *Client) ViewPR(number int) (*PR, error) {
 	args := append([]string{"pr", "view", strconv.Itoa(number),
-		"--json", "number,title,body,state,url,baseRefName,headRefName,headRefOid,isDraft,reviewDecision,mergeable,mergeStateStatus,additions,deletions,changedFiles,author,headRepositoryOwner"},
+		"--json", "id,number,title,body,state,url,baseRefName,headRefName,headRefOid,isDraft,reviewDecision,mergeable,mergeStateStatus,additions,deletions,changedFiles,author,headRepositoryOwner"},
 		c.repoArgs()...)
 	out, err := run(nil, args...)
 	if err != nil {
