@@ -151,12 +151,12 @@ nvim --listen /tmp/nvim.$id.sock
 ```
 
 Pressing `o` while reviewing that PR runs `nvim --server /tmp/nvim.$id.sock
---remote-send '<C-\><C-n>:e +LINE ./path/to/file<CR>'` for the file under the
-cursor, where `LINE` is the cursor's line in the new version of the file (for a
-removed line, the nearest line that still exists), and switches the tmux
-session to the `code` window. The leading keys return Neovim to normal mode
-first, so it works from insert mode too. When the socket does not exist
-nothing happens; outside tmux only the file is sent.
+--remote-expr "execute('edit +LINE ' . fnameescape('./path/to/file'))"` for
+the file under the cursor, where `LINE` is the cursor's line in the new version
+of the file (for a removed line, the nearest line that still exists), and
+switches the tmux session to the `code` window. An expression is used rather
+than sent keys so your mappings and the current mode cannot interfere. When
+the socket does not exist nothing happens; outside tmux only the file is sent.
 
 ### Text entry
 
