@@ -391,11 +391,11 @@ func (m *Model) fetchPR() tea.Cmd {
 func (m *Model) fetchDiff() tea.Cmd {
 	c, n := m.client, m.number
 	return func() tea.Msg {
-		text, err := c.Diff(n)
+		files, err := c.Files(n)
 		if err != nil {
 			return diffMsg{nil, err}
 		}
-		return diffMsg{diff.Parse(text), nil}
+		return diffMsg{files, nil}
 	}
 }
 

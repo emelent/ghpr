@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"ghpr/internal/diff"
 )
 
 // Client performs operations against a single repository.
@@ -212,6 +214,93 @@ func (c *Client) Diff(number int) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// Files returns the parsed diff of the pull request. It uses `gh pr diff`,
+// and when GitHub refuses that because the PR touches more than 300 files
+// (HTTP 406) it rebuilds the diff from the per-file REST API instead, which
+// serves up to 3000 files.
+func (c *Client) Files(number int) ([]diff.File, error) {
+	text, err := c.Diff(number)
+	if err == nil {
+		return diff.Parse(text), nil
+	}
+	if !isTooManyFiles(err) {
+		return nil, err
+	}
+	files, apiErr := c.filesFromAPI(number)
+	if apiErr != nil {
+		return nil, fmt.Errorf("%w (and the files API failed: %v)", err, apiErr)
+	}
+	return files, nil
+}
+
+// isTooManyFiles recognises GitHub declining a diff for exceeding its file
+// limit: "HTTP 406: Sorry, the diff exceeded the maximum number of files".
+func isTooManyFiles(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "406") || strings.Contains(s, "exceeded the maximum number of files")
+}
+
+// apiFile is one entry of GET /repos/{owner}/{repo}/pulls/{n}/files.
+type apiFile struct {
+	Filename         string `json:"filename"`
+	PreviousFilename string `json:"previous_filename"`
+	Status           string `json:"status"` // added, removed, modified, renamed, copied, changed, unchanged
+	Additions        int    `json:"additions"`
+	Deletions        int    `json:"deletions"`
+	Changes          int    `json:"changes"`
+	Patch            string `json:"patch"` // absent for binary files and very large patches
+}
+
+// filesFromAPI lists the PR's files page by page and converts them.
+func (c *Client) filesFromAPI(number int) ([]diff.File, error) {
+	endpoint := fmt.Sprintf("repos/%s/pulls/%d/files?per_page=100", c.Repo, number)
+	out, err := run(nil, "api", "--paginate", "--jq", ".[]", endpoint)
+	if err != nil {
+		return nil, err
+	}
+	var entries []apiFile
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for dec.More() {
+		var f apiFile
+		if err := dec.Decode(&f); err != nil {
+			return nil, fmt.Errorf("files API: %w", err)
+		}
+		entries = append(entries, f)
+	}
+	return filesFromAPI(entries), nil
+}
+
+// filesFromAPI converts files API entries into parsed diff files, keeping
+// GitHub's own change counts (the patch may be missing).
+func filesFromAPI(entries []apiFile) []diff.File {
+	files := make([]diff.File, 0, len(entries))
+	for _, e := range entries {
+		f := diff.File{OldPath: e.Filename, NewPath: e.Filename, Status: diff.Modified, Additions: e.Additions, Deletions: e.Deletions}
+		switch e.Status {
+		case "added", "copied":
+			f.Status = diff.Added
+			f.OldPath = ""
+		case "removed":
+			f.Status = diff.Deleted
+			f.NewPath = ""
+		case "renamed":
+			f.Status = diff.Renamed
+			f.OldPath = e.PreviousFilename
+		}
+		switch {
+		case e.Patch != "":
+			f.Hunks = diff.ParseHunks(e.Patch)
+		case e.Changes > 0:
+			f.PatchOmitted = true
+		case f.Status == diff.Added || f.Status == diff.Deleted || f.Status == diff.Modified:
+			// No patch and no counted changes: a binary file.
+			f.IsBinary = true
+		}
+		files = append(files, f)
+	}
+	return files
 }
 
 // FileContent fetches the raw content of a file at a given ref (branch or

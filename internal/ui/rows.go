@@ -162,6 +162,8 @@ func buildRows(f *diff.File, split bool, threads []gh.Thread) []row {
 	switch {
 	case f.IsBinary:
 		rows = append(rows, row{kind: rowNote, note: "Binary file – contents not shown"})
+	case f.PatchOmitted && len(f.Hunks) == 0:
+		rows = append(rows, row{kind: rowNote, note: fmt.Sprintf("GitHub left this patch out of the API (+%d -%d, too large) – press F to load the full file", f.Additions, f.Deletions)})
 	case len(f.Hunks) == 0:
 		rows = append(rows, row{kind: rowNote, note: "No textual changes (rename, mode change or empty file)"})
 	}

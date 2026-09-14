@@ -209,7 +209,10 @@ says how many were reset. Marks are per pull request.
 
 Every operation shells out to `gh`:
 
-- `gh pr list`, `gh pr view`, `gh pr diff` for reading
+- `gh pr list`, `gh pr view`, `gh pr diff` for reading; when a PR has more than
+  300 files GitHub refuses the diff, so the per-file REST API
+  (`pulls/{n}/files`, up to 3000 files) is used instead. Patches GitHub omits
+  as too large show a note; `F` still loads the full file
 - `gh pr review`, `gh pr comment` for reviews and PR comments
 - `gh pr merge`, `gh pr close`, `gh pr reopen` for merging, closing and reopening
 - `gh api` (REST) for creating, editing and deleting line comments and replies

@@ -191,3 +191,16 @@ func TestFingerprint(t *testing.T) {
 		t.Fatalf("fingerprint length %d", len(a[0].Fingerprint()))
 	}
 }
+
+func TestParseHunks(t *testing.T) {
+	hunks := ParseHunks("@@ -1,2 +1,3 @@\n a\n-b\n+c\n+d\n@@ -10 +11 @@\n-x\n+y")
+	if len(hunks) != 2 || len(hunks[0].Lines) != 4 || hunks[1].OldStart != 10 || hunks[1].NewStart != 11 {
+		t.Fatalf("hunks = %+v", hunks)
+	}
+	if hunks[0].Lines[2].Kind != Add || hunks[0].Lines[2].NewNum != 2 {
+		t.Fatalf("line numbering: %+v", hunks[0].Lines[2])
+	}
+	if ParseHunks("") != nil {
+		t.Fatal("empty patch has no hunks")
+	}
+}

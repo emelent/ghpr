@@ -60,6 +60,9 @@ type File struct {
 	// Full is set when the file was expanded with Expand and its single hunk
 	// covers the entire file; hunk headers are then meaningless.
 	Full bool
+	// PatchOmitted is set when GitHub reported changes for the file but
+	// left out the patch (it does so for very large diffs); Hunks is empty.
+	PatchOmitted bool
 }
 
 // Path returns the path to use for display and comment anchoring.
@@ -74,6 +77,16 @@ var hunkRe = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 var diffGitRe = regexp.MustCompile(`^diff --git a/(.*) b/(.*)$`)
 
 // Parse converts a unified diff into files.
+// ParseHunks parses a bare patch (hunks only, no "diff --git" header) as
+// returned per file by the GitHub pull request files API.
+func ParseHunks(patch string) []Hunk {
+	files := Parse("diff --git a/x b/x\n--- a/x\n+++ b/x\n" + patch)
+	if len(files) == 0 {
+		return nil
+	}
+	return files[0].Hunks
+}
+
 func Parse(text string) []File {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	lines := strings.Split(text, "\n")

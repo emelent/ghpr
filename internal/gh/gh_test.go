@@ -1,6 +1,10 @@
 package gh
 
-import "testing"
+import (
+	"testing"
+
+	"ghpr/internal/diff"
+)
 
 func TestLineCommentIsRange(t *testing.T) {
 	if (LineComment{Line: 5, Side: "RIGHT"}).IsRange() {
@@ -36,5 +40,49 @@ func TestParsePRRef(t *testing.T) {
 		if (err == nil) != tc.ok || repo != tc.repo || n != tc.n {
 			t.Errorf("%q: got (%q,%d,%v) want (%q,%d,ok=%v)", tc.in, repo, n, err, tc.repo, tc.n, tc.ok)
 		}
+	}
+}
+
+func TestFilesFromAPI(t *testing.T) {
+	entries := []apiFile{
+		{Filename: "a.go", Status: "modified", Additions: 1, Deletions: 1, Changes: 2, Patch: "@@ -1,2 +1,2 @@\n-old\n+new\n ctx"},
+		{Filename: "new.txt", Status: "added", Additions: 2, Changes: 2, Patch: "@@ -0,0 +1,2 @@\n+hello\n+world"},
+		{Filename: "gone.txt", Status: "removed", Deletions: 1, Changes: 1, Patch: "@@ -1 +0,0 @@\n-bye"},
+		{Filename: "b/new.go", PreviousFilename: "a/old.go", Status: "renamed"},
+		{Filename: "img.png", Status: "added"},
+		{Filename: "huge.json", Status: "modified", Additions: 5000, Deletions: 4000, Changes: 9000},
+	}
+	files := filesFromAPI(entries)
+	if len(files) != 6 {
+		t.Fatalf("%d files", len(files))
+	}
+	a := files[0]
+	if a.Status != diff.Modified || a.Path() != "a.go" || len(a.Hunks) != 1 || len(a.Hunks[0].Lines) != 3 || a.Additions != 1 || a.Deletions != 1 {
+		t.Fatalf("modified: %+v", a)
+	}
+	if n := files[1]; n.Status != diff.Added || n.OldPath != "" || n.Path() != "new.txt" || len(n.Hunks) != 1 || n.Hunks[0].Lines[0].Text != "hello" {
+		t.Fatalf("added: %+v", n)
+	}
+	if g := files[2]; g.Status != diff.Deleted || g.NewPath != "" || g.Path() != "gone.txt" || g.Hunks[0].Lines[0].Kind != diff.Del {
+		t.Fatalf("removed: %+v", g)
+	}
+	if r := files[3]; r.Status != diff.Renamed || r.OldPath != "a/old.go" || r.NewPath != "b/new.go" || r.IsBinary || r.PatchOmitted || len(r.Hunks) != 0 {
+		t.Fatalf("renamed: %+v", r)
+	}
+	if b := files[4]; !b.IsBinary || b.PatchOmitted {
+		t.Fatalf("binary: %+v", b)
+	}
+	if h := files[5]; !h.PatchOmitted || h.IsBinary || len(h.Hunks) != 0 || h.Additions != 5000 {
+		t.Fatalf("omitted patch: %+v", h)
+	}
+}
+
+func TestIsTooManyFiles(t *testing.T) {
+	err := &Error{Args: []string{"pr", "diff", "1"}, Stderr: "could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of files (300). Consider using 'List pull requests files' API or locally cloning the repository instead"}
+	if !isTooManyFiles(err) {
+		t.Fatal("406 should trigger the files API fallback")
+	}
+	if isTooManyFiles(&Error{Args: []string{"pr", "diff", "1"}, Stderr: "HTTP 404: Not Found"}) {
+		t.Fatal("other errors must not")
 	}
 }
