@@ -164,8 +164,8 @@ func (m *Model) toggleNote() tea.Cmd {
 }
 
 // handleNoteKey edits the text prompt for a new note.
-func (m *Model) handleNoteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+func (m *Model) handleNoteKey(key string, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key {
 	case "esc":
 		m.overlay = overlayNone
 		return m, nil

@@ -63,9 +63,9 @@ func (m *Model) refilterFiles() {
 }
 
 // handleFilePickerKey edits the query and moves through the results.
-func (m *Model) handleFilePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc", "ctrl+p":
+func (m *Model) handleFilePickerKey(key string, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc":
 		m.overlay = overlayNone
 		return m, nil
 	case "enter":

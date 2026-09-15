@@ -22,8 +22,8 @@ func (m *Model) openSearch() {
 }
 
 // handleSearchKey edits the / prompt.
-func (m *Model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+func (m *Model) handleSearchKey(key string, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key {
 	case "esc":
 		m.overlay = overlayNone
 		m.searchQ = m.searchPrev

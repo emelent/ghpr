@@ -10,6 +10,7 @@ import (
 
 	"ghpr/internal/diff"
 	"ghpr/internal/gh"
+	"ghpr/internal/keys"
 )
 
 // rowState describes how a row is highlighted.
@@ -550,15 +551,15 @@ func (m *Model) renderStatus(width int) string {
 		}
 		if m.mergeMethod == gh.Rebase {
 			left = styBar.Render(fmt.Sprintf(" Rebase and merge PR #%d (delete branch: %s)? ", m.number, del)) +
-				styBarKey.Render("y") + styBar.Render(" confirm  ") + styBarKey.Render("n") + styBar.Render(" cancel")
+				m.hk(keys.Merge, "confirm") + styBar.Render(" confirm  ") + m.hk(keys.Merge, "cancel") + styBar.Render(" cancel")
 		} else {
 			warn := ""
 			if m.pr != nil && m.pr.MergeStateStatus != "" && m.pr.MergeStateStatus != "CLEAN" && m.pr.MergeStateStatus != "UNKNOWN" {
 				warn = lipgloss.NewStyle().Background(colBarBg).Foreground(colWarn).Render(" ⚠ "+m.pr.MergeStateStatus) + styBar.Render("  ")
 			}
-			left = styBar.Render(" Merge: ") + warn + styBarKey.Render("m") + styBar.Render(" merge commit  ") +
-				styBarKey.Render("s") + styBar.Render(" squash  ") + styBarKey.Render("r") + styBar.Render(" rebase  ") +
-				styBarKey.Render("d") + styBar.Render(" delete branch: "+del+"  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
+			left = styBar.Render(" Merge: ") + warn + m.hk(keys.Merge, "merge_commit") + styBar.Render(" merge commit  ") +
+				m.hk(keys.Merge, "squash") + styBar.Render(" squash  ") + m.hk(keys.Merge, "rebase") + styBar.Render(" rebase  ") +
+				m.hk(keys.Merge, "delete_branch") + styBar.Render(" delete branch: "+del+"  ") + m.hk(keys.Merge, "cancel") + styBar.Render(" cancel")
 		}
 	case m.overlay == overlayDelete || m.overlay == overlayEdit:
 		c := m.pickTarget()
@@ -568,39 +569,39 @@ func (m *Model) renderStatus(width int) string {
 		}
 		pick := ""
 		if len(m.pickChoices) > 1 {
-			pick = styBarKey.Render("j/k") + styBar.Render(fmt.Sprintf(" choose (%d/%d)  ", m.pickIdx+1, len(m.pickChoices)))
+			pick = m.hk2(keys.Pick, "down", "up") + styBar.Render(fmt.Sprintf(" choose (%d/%d)  ", m.pickIdx+1, len(m.pickChoices)))
 		}
 		verb, confirm := "Delete", "confirm"
 		if m.overlay == overlayEdit {
 			verb, confirm = "Edit", "open editor"
 		}
 		left = styBar.Render(fmt.Sprintf(" %s @%s's comment “%s”? ", verb, c.Author, snippet)) +
-			styBarKey.Render("y") + styBar.Render(" "+confirm+"  ") + pick + styBarKey.Render("n") + styBar.Render(" cancel")
+			m.hk(keys.Pick, "confirm") + styBar.Render(" "+confirm+"  ") + pick + m.hk(keys.Pick, "cancel") + styBar.Render(" cancel")
 	case m.overlay == overlayState:
 		if m.pr != nil && m.pr.State == "OPEN" {
 			del := "off"
 			if m.mergeDelete {
 				del = "on"
 			}
-			left = styBar.Render(fmt.Sprintf(" Close PR #%d without merging? ", m.number)) + styBarKey.Render("y") + styBar.Render(" confirm  ") +
-				styBarKey.Render("d") + styBar.Render(" delete branch: "+del+"  ") + styBarKey.Render("n") + styBar.Render(" cancel")
+			left = styBar.Render(fmt.Sprintf(" Close PR #%d without merging? ", m.number)) + m.hk(keys.Confirm, "confirm") + styBar.Render(" confirm  ") +
+				m.hk(keys.Confirm, "delete_branch") + styBar.Render(" delete branch: "+del+"  ") + m.hk(keys.Confirm, "cancel") + styBar.Render(" cancel")
 		} else {
-			left = styBar.Render(fmt.Sprintf(" Reopen PR #%d? ", m.number)) + styBarKey.Render("y") + styBar.Render(" confirm  ") +
-				styBarKey.Render("n") + styBar.Render(" cancel")
+			left = styBar.Render(fmt.Sprintf(" Reopen PR #%d? ", m.number)) + m.hk(keys.Confirm, "confirm") + styBar.Render(" confirm  ") +
+				m.hk(keys.Confirm, "cancel") + styBar.Render(" cancel")
 		}
 	case m.overlay == overlayReview:
-		left = styBar.Render(" Submit review: ") + styBarKey.Render("a") + styBar.Render(" approve  ") +
-			styBarKey.Render("r") + styBar.Render(" request changes  ") + styBarKey.Render("c") + styBar.Render(" comment  ") +
-			styBarKey.Render("esc") + styBar.Render(" cancel")
+		left = styBar.Render(" Submit review: ") + m.hk(keys.Review, "approve") + styBar.Render(" approve  ") +
+			m.hk(keys.Review, "request_changes") + styBar.Render(" request changes  ") + m.hk(keys.Review, "comment") + styBar.Render(" comment  ") +
+			m.hk(keys.Review, "cancel") + styBar.Render(" cancel")
 	case m.overlay == overlayFiles:
-		left = styBar.Render(" Go to file: type to filter  ") + styBarKey.Render("↑/↓") + styBar.Render(" choose  ") +
-			styBarKey.Render("enter") + styBar.Render(" open  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
+		left = styBar.Render(" Go to file: type to filter  ") + m.hk2(keys.Prompt, "up", "down") + styBar.Render(" choose  ") +
+			m.hk(keys.Prompt, "accept") + styBar.Render(" open  ") + m.hk(keys.Prompt, "cancel") + styBar.Render(" cancel")
 	case m.overlay == overlayGlobal:
-		left = styBar.Render(" Search all files: type to search  ") + styBarKey.Render("↑/↓") + styBar.Render(" choose  ") +
-			styBarKey.Render("enter") + styBar.Render(" jump  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
+		left = styBar.Render(" Search all files: type to search  ") + m.hk2(keys.Prompt, "up", "down") + styBar.Render(" choose  ") +
+			m.hk(keys.Prompt, "accept") + styBar.Render(" jump  ") + m.hk(keys.Prompt, "cancel") + styBar.Render(" cancel")
 	case m.overlay == overlayNote:
 		left = styBar.Render(" ⚑ Add note at "+m.ntPending.location()+": "+m.ntInput) + styBarKey.Render("▏") +
-			styBar.Render("  ") + styBarKey.Render("enter") + styBar.Render(" save  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
+			styBar.Render("  ") + m.hk(keys.Prompt, "accept") + styBar.Render(" save  ") + m.hk(keys.Prompt, "cancel") + styBar.Render(" cancel")
 	case m.overlay == overlaySearch:
 		count := ""
 		if m.searchInput != "" {
@@ -608,12 +609,12 @@ func (m *Model) renderStatus(width int) string {
 			count = styBarDim.Render(fmt.Sprintf("  %d match(es)  ", total))
 		}
 		left = styBar.Render(" /"+m.searchInput) + styBarKey.Render("▏") + count +
-			styBar.Render("  ") + styBarKey.Render("enter") + styBar.Render(" keep  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
+			styBar.Render("  ") + m.hk(keys.Prompt, "accept") + styBar.Render(" keep  ") + m.hk(keys.Prompt, "cancel") + styBar.Render(" cancel")
 	case m.selecting && m.overlay == overlayNone:
 		left = styBar.Render(fmt.Sprintf(" %d line(s) selected  ", m.selectedLineCount())) +
-			styBarKey.Render("j/k") + styBar.Render(" extend  ") +
-			styBarKey.Render("c") + styBar.Render(" comment  ") +
-			styBarKey.Render("esc") + styBar.Render(" cancel")
+			m.hk2(keys.Diff, "down", "up") + styBar.Render(" extend  ") +
+			m.hk(keys.Diff, "comment") + styBar.Render(" comment  ") +
+			m.hk(keys.Diff, "cancel") + styBar.Render(" cancel")
 	case m.status != "":
 		if m.statusErr {
 			left = lipgloss.NewStyle().Background(colBarBg).Foreground(colErr).Render(" ✗ " + m.status)
@@ -623,7 +624,7 @@ func (m *Model) renderStatus(width int) string {
 	case m.overlay == overlayNone && m.screen == screenDiff && m.rowNoteIndex(m.cursor) >= 0:
 		nt := m.notes[m.rowNoteIndex(m.cursor)]
 		left = lipgloss.NewStyle().Background(colBarBg).Foreground(colWarn).Bold(true).Render(" ⚑ "+nt.body) +
-			styBar.Render("  ") + styBarKey.Render("a") + styBar.Render(" remove note  ") + styBarKey.Render("A") + styBar.Render(fmt.Sprintf(" all notes (%d)", len(m.notes)))
+			styBar.Render("  ") + m.hk(keys.Diff, "note") + styBar.Render(" remove note  ") + m.hk(keys.Diff, "notes") + styBar.Render(fmt.Sprintf(" all notes (%d)", len(m.notes)))
 	case m.searchQ != "" && m.overlay == overlayNone:
 		pos, total := m.matchPos()
 		where := fmt.Sprintf("%d match(es)", total)
@@ -631,27 +632,34 @@ func (m *Model) renderStatus(width int) string {
 			where = fmt.Sprintf("%d/%d", pos, total)
 		}
 		left = styBar.Render(" /"+m.searchQ) + styBarDim.Render("  "+where+"  ") +
-			styBarKey.Render("n/N") + styBar.Render(" next / prev  ") + styBarKey.Render("esc") + styBar.Render(" clear")
+			m.hk2(keys.Diff, "next", "prev") + styBar.Render(" next / prev  ") + m.hk(keys.Diff, "cancel") + styBar.Render(" clear")
 	default:
 		left = styBar.Render(" ")
 	}
 	var right string
 	switch {
 	case m.overlay == overlayInput && m.inKind == inputMerge:
-		right = styBarKey.Render("ctrl+s") + styBarDim.Render(" merge  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
+		right = m.hk(keys.Input, "submit") + styBarDim.Render(" merge  ") + m.hk(keys.Input, "cancel") + styBarDim.Render(" cancel ")
 	case m.overlay == overlayInput:
-		right = styBarKey.Render("ctrl+s") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
+		right = m.hk(keys.Input, "submit") + styBarDim.Render(" submit  ") + m.hk(keys.Input, "cancel") + styBarDim.Render(" cancel ")
 	case m.screen == screenComments:
-		right = styBarKey.Render("j/k") + styBarDim.Render(" move  ") + styBarKey.Render("l") + styBarDim.Render(" open in diff  ") +
-			styBarKey.Render("esc") + styBarDim.Render(" close ")
+		right = m.hk2(keys.Comments, "down", "up") + styBarDim.Render(" move  ") + m.hk(keys.Comments, "open") + styBarDim.Render(" open in diff  ") +
+			m.hk(keys.Comments, "close") + styBarDim.Render(" close ")
 	case m.screen == screenNotes:
-		right = styBarKey.Render("j/k") + styBarDim.Render(" move  ") + styBarKey.Render("l") + styBarDim.Render(" go to line  ") +
-			styBarKey.Render("d") + styBarDim.Render(" remove  ") + styBarKey.Render("esc") + styBarDim.Render(" close ")
+		right = m.hk2(keys.Notes, "down", "up") + styBarDim.Render(" move  ") + m.hk(keys.Notes, "open") + styBarDim.Render(" go to line  ") +
+			m.hk(keys.Notes, "delete") + styBarDim.Render(" remove  ") + m.hk(keys.Notes, "close") + styBarDim.Render(" close ")
 	case m.screen == screenPicker:
-		right = styBarKey.Render("enter/l") + styBarDim.Render(" open  ") + styBarKey.Render("s") + styBarDim.Render(" state: "+m.listState+"  ") +
-			styBarKey.Render("/") + styBarDim.Render(" filter  ") + styBarKey.Render("q") + styBarDim.Render(" quit ")
+		right = styBarKey.Render(m.keys.Label(keys.List, "open")) + styBarDim.Render(" open  ") + m.hk(keys.List, "cycle_state") + styBarDim.Render(" state: "+m.listState+"  ") +
+			styBarKey.Render("/") + styBarDim.Render(" filter  ") + m.hk(keys.List, "quit") + styBarDim.Render(" quit ")
 	default:
-		hints := []struct{ k, v string }{{"j/k", "move"}, {"J/K", "change"}, {"m", "viewed"}, {"s", "split"}, {"F", "full"}, {"V", "select"}, {"c", "comment"}, {"r", "reply"}, {"x", "resolve"}, {"v", "review"}, {"M", "merge"}, {"?", "help"}}
+		hints := []struct{ k, v string }{
+			{m.keys.First(keys.Diff, "down") + "/" + m.keys.First(keys.Diff, "up"), "move"},
+			{m.keys.First(keys.Diff, "next_change") + "/" + m.keys.First(keys.Diff, "prev_change"), "change"},
+			{m.keys.First(keys.Diff, "viewed"), "viewed"}, {m.keys.First(keys.Diff, "split"), "split"}, {m.keys.First(keys.Diff, "full_file"), "full"},
+			{m.keys.First(keys.Diff, "select"), "select"}, {m.keys.First(keys.Diff, "comment"), "comment"}, {m.keys.First(keys.Diff, "reply"), "reply"},
+			{m.keys.First(keys.Diff, "resolve"), "resolve"}, {m.keys.First(keys.Diff, "review"), "review"}, {m.keys.First(keys.Diff, "merge"), "merge"},
+			{m.keys.First(keys.Diff, "help"), "help"},
+		}
 		var sb strings.Builder
 		for _, h := range hints {
 			sb.WriteString(styBarKey.Render(h.k) + styBarDim.Render(" "+h.v+"  "))
@@ -674,6 +682,14 @@ func (m *Model) renderStatus(width int) string {
 	return left + styBar.Render(strings.Repeat(" ", fill)) + right
 }
 
+// hk renders the primary key of an action for a status-bar hint.
+func (m *Model) hk(ctx, action string) string { return styBarKey.Render(m.keys.First(ctx, action)) }
+
+// hk2 renders two actions' primary keys as "a/b".
+func (m *Model) hk2(ctx, a, b string) string {
+	return styBarKey.Render(m.keys.First(ctx, a) + "/" + m.keys.First(ctx, b))
+}
+
 // renderInput renders the comment/review text entry panel.
 func (m *Model) renderInput(width, height int) []string {
 	lines := []string{styBorder.Render(strings.Repeat("─", width))}
@@ -687,55 +703,93 @@ func (m *Model) renderInput(width, height int) []string {
 	return lines[:height]
 }
 
+// helpRow is one line of the help screen: the actions whose keys are shown
+// (joined with " / ") and what they do. literal overrides the key column.
+type helpRow struct {
+	acts    [][2]string // {context, action}
+	literal string
+	desc    string
+}
+
 func (m *Model) renderHelp(width, height int) []string {
-	rows := [][2]string{
-		{"j / k, ↓ / ↑", "move cursor"},
-		{"ctrl+d / ctrl+u, pgdn / pgup", "half page"},
-		{"ctrl+f / ctrl+b", "full page"},
-		{"g / G", "top / bottom (diff, file list or PR list)"},
-		{"] / [", "next / previous file"},
-		{"J / K", "next / previous change in the file"},
-		{"n / N", "next / previous review thread; next / previous match while a search is active"},
-		{"/", "search the file (case-insensitive); enter keeps the match, esc cancels"},
-		{"ctrl+/", "search every file in the diff, exact hits first then fuzzy: ↑/↓ (ctrl+j/k) choose, enter jumps to the line"},
-		{"ctrl+p, / (file list)", "fuzzy-find a file by path: type to filter, ↑/↓ (ctrl+j/k) choose, enter open"},
-		{"esc", "cancel the line selection, otherwise clear the search"},
-		{"tab", "focus file list / diff"},
-		{"h / l", "diff: scroll left / right when lines overflow; h at the left edge goes to the file tree"},
-		{"l (file tree)", "open the selected file"},
-		{"f", "toggle file list"},
-		{"t", "file list: tree / flat"},
-		{"T", "show only files with review threads (file list, ] / [, ctrl+p and ctrl+/ follow it)"},
-		{"i", "comments screen: every thread with its code line and first comment; j/k move, l opens it in the diff (h there comes back), esc closes"},
-		{"a", "add a note on the current line to come back to (press again to remove it); noted lines get amber line numbers; notes are kept per PR"},
-		{"A", "notes screen: your notes with their lines; j/k move, l jumps there (h comes back), d removes, esc closes"},
-		{"enter / l, h, H / L", "file tree: open file or expand dir, collapse (or go to parent), collapse / expand all"},
-		{"s", "toggle inline / side-by-side"},
-		{"F", "toggle full file view (whole file with changes in place)"},
-		{"m", "mark / unmark the file as viewed (auto-unmarked if it changes later)"},
-		{"c", "comment on the current line (or selection)"},
-		{"V", "start / stop selecting lines for a multi-line comment"},
-		{"r", "reply to the thread under the cursor"},
-		{"x", "resolve / unresolve the thread under the cursor"},
-		{"d", "delete one of your comments in the thread under the cursor (y to confirm)"},
-		{"e", "edit one of your comments in the thread under the cursor (y opens the editor)"},
-		{"v", "submit a review (approve / request changes / comment)"},
-		{"M", "merge the PR: m / s open the commit message to edit, r rebase, d delete branch"},
-		{"X", "close the PR without merging, or reopen a closed PR"},
-		{"C", "comment on the PR (general)"},
-		{"o", "open the current file at the cursor line in Neovim listening on /tmp/nvim.<pr node id>.sock and switch to the tmux window \"code\" (no socket: nothing happens)"},
-		{"O", "open the PR in the browser"},
-		{"R", "refresh PR, diff and threads"},
-		{"ctrl+s / esc", "submit / cancel text entry"},
-		{"mouse", "click a line to move the cursor, drag or shift+click to select lines, wheel to scroll; click a file or folder in the file list; click a PR in the list, twice to open"},
-		{"?", "toggle this help"},
-		{"b / backspace", "back to the pull request list"},
-		{"q", "back to the list when opened from it, otherwise quit"},
-		{"Q / ctrl+c", "quit"},
+	d := func(actions ...string) [][2]string {
+		out := make([][2]string, len(actions))
+		for i, a := range actions {
+			out[i] = [2]string{keys.Diff, a}
+		}
+		return out
 	}
-	lines := []string{padRight(styTitle.Render(" Keys"), width), styBorder.Render(strings.Repeat("─", width))}
+	f := func(actions ...string) [][2]string {
+		out := make([][2]string, len(actions))
+		for i, a := range actions {
+			out[i] = [2]string{keys.Files, a}
+		}
+		return out
+	}
+	rows := []helpRow{
+		{acts: d("down", "up"), desc: "move cursor"},
+		{acts: d("half_page_down", "half_page_up"), desc: "half page"},
+		{acts: d("page_down", "page_up"), desc: "full page"},
+		{acts: d("top", "bottom"), desc: "top / bottom (diff, file list or PR list)"},
+		{acts: d("next_file", "prev_file"), desc: "next / previous file"},
+		{acts: d("next_change", "prev_change"), desc: "next / previous change in the file"},
+		{acts: d("next", "prev"), desc: "next / previous review thread; next / previous match while a search is active"},
+		{acts: d("search"), desc: "search the file (case-insensitive); enter keeps the match, esc cancels; in the file list it opens the file picker"},
+		{acts: d("search_all"), desc: "search every file in the diff, exact hits first then fuzzy: ↑/↓ (ctrl+j/k) choose, enter jumps to the line"},
+		{acts: d("file_picker"), desc: "fuzzy-find a file by path: type to filter, ↑/↓ (ctrl+j/k) choose, enter open"},
+		{acts: d("cancel"), desc: "cancel the line selection, otherwise clear the search"},
+		{acts: d("focus"), desc: "focus file list / diff"},
+		{acts: d("scroll_left", "scroll_right"), desc: "diff: scroll left / right when lines overflow; left at the edge goes to the file tree (or back to the comments / notes list)"},
+		{acts: f("open", "expand"), desc: "file tree: open the file or toggle / expand the directory"},
+		{acts: f("collapse"), desc: "file tree: collapse the directory or go to its parent"},
+		{acts: f("collapse_all", "expand_all"), desc: "file tree: collapse / expand every directory"},
+		{acts: d("toggle_files"), desc: "toggle file list"},
+		{acts: d("tree_flat"), desc: "file list: tree / flat"},
+		{acts: d("threads_only"), desc: "show only files with review threads (file list, next / previous file, file picker and search follow it)"},
+		{acts: d("comments"), desc: "comments screen: every thread with its code line and first comment; j/k move, l opens it in the diff (h there comes back), esc closes"},
+		{acts: d("note"), desc: "add a note on the current line to come back to (press again to remove it); noted lines get amber line numbers; notes are kept per PR"},
+		{acts: d("notes"), desc: "notes screen: your notes with their lines; j/k move, l jumps there (h comes back), d removes, esc closes"},
+		{acts: d("split"), desc: "toggle inline / side-by-side"},
+		{acts: d("full_file"), desc: "toggle full file view (whole file with changes in place)"},
+		{acts: d("viewed"), desc: "mark / unmark the file as viewed (auto-unmarked if it changes later; synced with GitHub)"},
+		{acts: d("comment"), desc: "comment on the current line (or selection)"},
+		{acts: d("select"), desc: "start / stop selecting lines for a multi-line comment"},
+		{acts: d("reply"), desc: "reply to the thread under the cursor"},
+		{acts: d("resolve"), desc: "resolve / unresolve the thread under the cursor"},
+		{acts: d("delete_comment"), desc: "delete one of your comments in the thread under the cursor (y to confirm)"},
+		{acts: d("edit_comment"), desc: "edit one of your comments in the thread under the cursor (y opens the editor)"},
+		{acts: d("review"), desc: "submit a review (approve / request changes / comment)"},
+		{acts: d("merge"), desc: "merge the PR: m / s open the commit message to edit, r rebase, d delete branch"},
+		{acts: d("close_reopen"), desc: "close the PR without merging, or reopen a closed PR"},
+		{acts: d("pr_comment"), desc: "comment on the PR (general)"},
+		{acts: d("editor"), desc: "open the current file at the cursor line in Neovim listening on /tmp/nvim.<pr node id>.sock and switch to the tmux window \"code\" (no socket: nothing happens)"},
+		{acts: d("browser"), desc: "open the PR in the browser"},
+		{acts: d("refresh"), desc: "refresh PR, diff and threads"},
+		{acts: [][2]string{{keys.Input, "submit"}, {keys.Input, "cancel"}}, desc: "submit / cancel text entry"},
+		{literal: "mouse", desc: "click a line to move the cursor, drag or shift+click to select lines, wheel to scroll; click a file or folder in the file list; click a PR in the list, twice to open"},
+		{acts: d("help"), desc: "toggle this help"},
+		{acts: d("back"), desc: "back to the pull request list"},
+		{acts: d("quit"), desc: "back to the list when opened from it, otherwise quit"},
+		{acts: d("force_quit"), literal: m.keys.Label(keys.Diff, "force_quit") + " / ctrl+c", desc: "quit"},
+	}
+	where := "built-in defaults"
+	if m.keysPath != "" {
+		where = m.keysPath
+	}
+	lines := []string{
+		padRight(styTitle.Render(" Keys")+styDim.Render("  bindings: "+where+" · ghpr --print-keys prints the defaults to edit"), width),
+		styBorder.Render(strings.Repeat("─", width)),
+	}
 	for _, r := range rows {
-		lines = append(lines, padRight("  "+styHelpKey.Render(padRight(r[0], 30))+styDim.Render(r[1]), width))
+		label := r.literal
+		if label == "" {
+			parts := make([]string, len(r.acts))
+			for i, a := range r.acts {
+				parts[i] = m.keys.Label(a[0], a[1])
+			}
+			label = strings.Join(parts, " / ")
+		}
+		lines = append(lines, padRight("  "+styHelpKey.Render(padRight(label, 30))+styDim.Render(r.desc), width))
 	}
 	for len(lines) < height {
 		lines = append(lines, strings.Repeat(" ", width))

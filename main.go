@@ -6,11 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"ghpr/internal/gh"
+	"ghpr/internal/keys"
 	"ghpr/internal/state"
 	"ghpr/internal/ui"
 )
@@ -25,7 +27,9 @@ Usage:
   ghpr [flags] [<number> | <url> | owner/repo#<number>]
 
 Without a PR reference an interactive picker lists open pull requests.
-Viewed-file marks are stored in $GHPR_STATE_DIR or the user config dir (ghpr/viewed.json).
+Viewed-file marks and notes are stored in $GHPR_STATE_DIR or the user config
+dir (ghpr/viewed.json). Key bindings are read from keys.toml in the same
+directory; run "ghpr --print-keys > keys.toml" there to start from the defaults.
 
 Flags:
   -R, --repo owner/name   repository (default: repository of the current directory)
@@ -34,6 +38,7 @@ Flags:
   -s, --split             start in side-by-side mode
   -S, --state name        PR picker filter: open (default), closed, merged, all
   --debug-keys            show the name of every key press in the status bar
+  --print-keys            print the default key bindings as TOML and exit
   -V, --version           print the version and exit
   -h, --help              show this help
 
@@ -43,7 +48,7 @@ Keys inside the app: press ? for the full list.
 
 func main() {
 	var repo, theme, syntax, listState string
-	var split, help, showVersion, debugKeys bool
+	var split, help, showVersion, debugKeys, printKeys bool
 	flag.StringVar(&repo, "R", "", "")
 	flag.StringVar(&repo, "repo", "", "")
 	flag.StringVar(&theme, "t", os.Getenv("GHPR_THEME"), "")
@@ -54,12 +59,20 @@ func main() {
 	flag.BoolVar(&split, "s", false, "")
 	flag.BoolVar(&split, "split", false, "")
 	flag.BoolVar(&debugKeys, "debug-keys", false, "")
+	flag.BoolVar(&printKeys, "print-keys", false, "")
 	flag.BoolVar(&showVersion, "V", false, "")
 	flag.BoolVar(&showVersion, "version", false, "")
 	flag.BoolVar(&help, "h", false, "")
 	flag.BoolVar(&help, "help", false, "")
 	flag.Usage = usage
 	flag.Parse()
+	if printKeys {
+		fmt.Print(keys.DefaultTOML())
+		if dir, err := state.Dir(); err == nil {
+			fmt.Fprintf(os.Stderr, "# save as %s\n", filepath.Join(dir, "keys.toml"))
+		}
+		return
+	}
 	if help {
 		usage()
 		return
@@ -113,6 +126,16 @@ func main() {
 		} else {
 			fmt.Fprintln(os.Stderr, "warning: viewed-file state disabled:", err)
 		}
+		keysPath := filepath.Join(dir, "keys.toml")
+		km, err := keys.Load(keysPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		if _, statErr := os.Stat(keysPath); statErr != nil {
+			keysPath = "" // no file: the help screen says "built-in defaults"
+		}
+		model.SetKeys(km, keysPath)
 	}
 	p := tea.NewProgram(model)
 	final, err := p.Run()

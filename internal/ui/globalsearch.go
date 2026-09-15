@@ -125,9 +125,9 @@ func (m *Model) refilterGlobal() {
 }
 
 // handleGlobalSearchKey edits the query and moves through the hits.
-func (m *Model) handleGlobalSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc", "ctrl+/", "ctrl+_":
+func (m *Model) handleGlobalSearchKey(key string, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc":
 		m.overlay = overlayNone
 		return m, nil
 	case "enter":

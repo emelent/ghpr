@@ -16,6 +16,7 @@ import (
 	"ghpr/internal/diff"
 	"ghpr/internal/editor"
 	"ghpr/internal/gh"
+	"ghpr/internal/keys"
 	"ghpr/internal/state"
 )
 
@@ -70,9 +71,11 @@ const (
 
 // Model is the root bubbletea model.
 type Model struct {
-	client *gh.Client
-	number int
-	hl     *Highlighter
+	client   *gh.Client
+	number   int
+	hl       *Highlighter
+	keys     *keys.Map // key bindings (defaults plus the user's keys.toml)
+	keysPath string    // where the bindings were loaded from, for the help screen
 
 	width, height int
 	screen        screen
@@ -220,6 +223,7 @@ func New(client *gh.Client, number int, syntax string) *Model {
 		client:      client,
 		number:      number,
 		hl:          NewHighlighter(syntax),
+		keys:        keys.Default(),
 		spinner:     sp,
 		ta:          ta,
 		showFiles:   true,
@@ -763,7 +767,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	if m.screen == screenPicker {
 		if m.list.FilterState() != list.Filtering {
-			switch key {
+			switch m.keys.Translate(keys.List, key) {
 			case "q":
 				return m, tea.Quit
 			case "s":
@@ -778,15 +782,15 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.screen == screenComments {
-		return m.handleCommentsKey(key)
+		return m.handleCommentsKey(m.keys.Translate(keys.Comments, key))
 	}
 	if m.screen == screenNotes {
-		return m.handleNotesKey(key)
+		return m.handleNotesKey(m.keys.Translate(keys.Notes, key))
 	}
 
 	switch m.overlay {
 	case overlayInput:
-		switch key {
+		switch m.keys.Translate(keys.Input, key) {
 		case "esc":
 			m.closeInput()
 			return m, nil
@@ -800,7 +804,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case overlayReview:
-		switch key {
+		switch m.keys.Translate(keys.Review, key) {
 		case "a":
 			m.overlay = overlayNone
 			m.openInput(inputReview, fmt.Sprintf("Approve PR #%d — optional comment", m.number))
@@ -819,25 +823,33 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case overlayMerge:
-		return m.handleMergeKey(key)
+		return m.handleMergeKey(m.keys.Translate(keys.Merge, key))
 
 	case overlayDelete, overlayEdit:
-		return m.handlePickKey(key)
+		return m.handlePickKey(m.keys.Translate(keys.Pick, key))
 
 	case overlaySearch:
-		return m.handleSearchKey(msg)
+		return m.handleSearchKey(m.keys.Translate(keys.Prompt, key), msg)
 
 	case overlayFiles:
-		return m.handleFilePickerKey(msg)
+		pk := m.keys.Translate(keys.Prompt, key)
+		if m.keys.Is(keys.Diff, "file_picker", key) {
+			pk = "esc" // the key that opened it closes it
+		}
+		return m.handleFilePickerKey(pk, msg)
 
 	case overlayGlobal:
-		return m.handleGlobalSearchKey(msg)
+		pk := m.keys.Translate(keys.Prompt, key)
+		if m.keys.Is(keys.Diff, "search_all", key) {
+			pk = "esc"
+		}
+		return m.handleGlobalSearchKey(pk, msg)
 
 	case overlayNote:
-		return m.handleNoteKey(msg)
+		return m.handleNoteKey(m.keys.Translate(keys.Prompt, key), msg)
 
 	case overlayState:
-		switch key {
+		switch m.keys.Translate(keys.Confirm, key) {
 		case "d":
 			m.mergeDelete = !m.mergeDelete
 		case "y", "enter":
@@ -858,12 +870,12 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.filesFocused {
-		if handled, cmd := m.handleFilesKey(key); handled {
+		if handled, cmd := m.handleFilesKey(m.keys.Translate(keys.Files, key)); handled {
 			return m, cmd
 		}
 	}
 
-	switch key {
+	switch m.keys.Translate(keys.Diff, key) {
 	case "q":
 		if m.selecting {
 			m.clearSelection()
@@ -2054,6 +2066,15 @@ func (m *Model) SetDebugKeys(v bool) { m.debugKeys = v }
 
 // SetStore enables persisted "viewed" marks for files.
 func (m *Model) SetStore(s *state.Store) { m.store = s }
+
+// SetKeys installs the key bindings to use (defaults when nil) and the file
+// they came from, shown in the help screen.
+func (m *Model) SetKeys(k *keys.Map, path string) {
+	if k == nil {
+		k = keys.Default()
+	}
+	m.keys, m.keysPath = k, path
+}
 
 // ---------- viewed files ----------
 

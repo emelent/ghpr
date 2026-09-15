@@ -162,6 +162,37 @@ switches the tmux session to the `code` window. An expression is used rather
 than sent keys so your mappings and the current mode cannot interfere. When
 the socket does not exist nothing happens; outside tmux only the file is sent.
 
+### Custom key bindings
+
+Every key above can be changed in `keys.toml`, kept in the same directory as
+the viewed-file state (`$GHPR_STATE_DIR` or `<user config dir>/ghpr`). Print
+the defaults, save them there and edit the entries you want; anything left out
+keeps its default:
+
+```sh
+ghpr --print-keys > "$(ghpr --print-keys 2>&1 >/dev/null | sed 's/^# save as //')"
+```
+
+Bindings are grouped by context: `[list]`, `[diff]`, `[files]` (file panel
+focused), `[comments]`, `[notes]`, `[input]`, `[prompt]`, `[review]`, `[merge]`,
+`[pick]` and `[confirm]`. Each action takes a list of key names as
+`--debug-keys` shows them; an empty list unbinds the action:
+
+```toml
+[diff]
+next_file = ["n", "ctrl+n"]   # n moves to the next file…
+next      = ["ctrl+j"]        # …so the thread / match jump needs a new key
+notes     = []                # unbind
+
+[prompt]
+down = ["ctrl+n"]
+up   = ["ctrl+p"]
+```
+
+A key may serve only one action per context; conflicts and unknown names are
+reported at start-up. The help screen (`?`) and the status bar hints show the
+bindings in effect. `ctrl+c` always quits.
+
 ### Text entry
 
 | Key | Action |
