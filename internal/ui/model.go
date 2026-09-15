@@ -111,6 +111,7 @@ type Model struct {
 
 	// viewed-file tracking (persisted via store; nil store disables it)
 	store        *state.Store
+	remoteViewed []string // GitHub's viewed paths waiting for the diff to load
 	fingerprints []string // per file, computed at parse time
 	restoreLast  bool     // jump to the remembered file/line once the diff loads
 
@@ -317,6 +318,18 @@ type fileContentMsg struct {
 	err  error
 }
 type userMsg struct{ login string }
+
+// viewedMsg carries the files ticked as viewed on github.com.
+type viewedMsg struct {
+	paths []string
+	err   error
+}
+
+// viewedSyncMsg reports pushing one local viewed toggle to github.com.
+type viewedSyncMsg struct {
+	path string
+	err  error
+}
 type actionMsg struct {
 	label   string
 	err     error
@@ -415,6 +428,63 @@ func (m *Model) fetchThreads() tea.Cmd {
 	}
 }
 
+// fetchViewed asks GitHub which files the user has ticked as viewed there,
+// so they can be merged into the local marks. Skipped without a store.
+func (m *Model) fetchViewed() tea.Cmd {
+	if m.store == nil {
+		return nil
+	}
+	c, n := m.client, m.number
+	return func() tea.Msg {
+		paths, err := c.ViewedFiles(n)
+		return viewedMsg{paths, err}
+	}
+}
+
+// mergeRemoteViewed marks files GitHub reports as viewed that are in the
+// diff and not marked locally, and returns how many were added. Local marks
+// are never removed here: they track content and win over GitHub's view.
+func (m *Model) mergeRemoteViewed(paths []string) int {
+	if m.store == nil || len(m.files) == 0 {
+		return 0
+	}
+	idx := map[string]int{}
+	for i := range m.files {
+		idx[m.files[i].Path()] = i
+	}
+	key := m.prKey()
+	sha := ""
+	if m.pr != nil {
+		sha = m.pr.HeadRefOid
+	}
+	added := 0
+	for _, p := range paths {
+		i, ok := idx[p]
+		if !ok || m.isViewed(p) {
+			continue
+		}
+		m.store.Set(key, p, state.Viewed{ViewedAt: time.Now(), HeadSHA: sha, Fingerprint: m.fingerprints[i]})
+		added++
+	}
+	if added > 0 {
+		_ = m.store.Save()
+		m.foldAllViewedDirs()
+		m.rebuildTree()
+	}
+	return added
+}
+
+// pushViewed mirrors a local viewed toggle to github.com in the background.
+func (m *Model) pushViewed(path string, viewed bool) tea.Cmd {
+	if m.pr == nil || m.pr.ID == "" {
+		return nil
+	}
+	c, id := m.client, m.pr.ID
+	return func() tea.Msg {
+		return viewedSyncMsg{path, c.SetFileViewed(id, path, viewed)}
+	}
+}
+
 // fullEligible reports whether a file has content beyond its hunks worth
 // fetching. Added and deleted files are already shown in full by the diff.
 func fullEligible(f *diff.File) bool {
@@ -455,7 +525,8 @@ func (m *Model) setStatus(msg string, isErr bool) tea.Cmd {
 
 func (m *Model) loadAll() tea.Cmd {
 	m.pending = 3
-	return tea.Batch(m.setBusy(fmt.Sprintf("Loading PR #%d…", m.number)), m.fetchPR(), m.fetchDiff(), m.fetchThreads())
+	m.remoteViewed = nil
+	return tea.Batch(m.setBusy(fmt.Sprintf("Loading PR #%d…", m.number)), m.fetchPR(), m.fetchDiff(), m.fetchThreads(), m.fetchViewed())
 }
 
 func (m *Model) reloadThreads(withPR bool) tea.Cmd {
@@ -509,6 +580,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case userMsg:
 		m.login = msg.login
+		return m, nil
+
+	case viewedMsg:
+		if msg.err != nil {
+			return m, m.setStatus("Viewed files from GitHub: "+msg.err.Error(), true)
+		}
+		if len(m.files) == 0 {
+			m.remoteViewed = msg.paths // merge once the diff arrives
+			return m, nil
+		}
+		if n := m.mergeRemoteViewed(msg.paths); n > 0 {
+			return m, m.setStatus(fmt.Sprintf("%d file(s) marked viewed on GitHub added to your marks", n), false)
+		}
+		return m, nil
+
+	case viewedSyncMsg:
+		if msg.err != nil {
+			return m, m.setStatus("Sync viewed mark for "+msg.path+" to GitHub failed: "+msg.err.Error(), true)
+		}
 		return m, nil
 
 	case tea.MouseClickMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg, tea.MouseMotionMsg:
@@ -576,6 +666,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if dropped > 0 {
 			cmds = append(cmds, m.setStatus(fmt.Sprintf("%d file(s) changed since you viewed them – unmarked", dropped), false))
+		}
+		if m.remoteViewed != nil {
+			if n := m.mergeRemoteViewed(m.remoteViewed); n > 0 {
+				cmds = append(cmds, m.setStatus(fmt.Sprintf("%d file(s) marked viewed on GitHub added to your marks", n), false))
+			}
+			m.remoteViewed = nil
 		}
 		return m, tea.Batch(cmds...)
 
@@ -1999,7 +2095,7 @@ func (m *Model) toggleViewed() tea.Cmd {
 			return m.setStatus("Save viewed state: "+err.Error(), true)
 		}
 		m.revealFile(m.fileIdx) // its folder may have been auto-folded
-		return m.setStatus("Unmarked "+path, false)
+		return tea.Batch(m.setStatus("Unmarked "+path, false), m.pushViewed(path, false))
 	}
 	sha := ""
 	if m.pr != nil {
@@ -2014,7 +2110,7 @@ func (m *Model) toggleViewed() tea.Cmd {
 	m.showFiles = true
 	m.filesFocused = true
 	m.invalidateLayout()
-	return m.setStatus(fmt.Sprintf("Viewed %s (%d/%d)", path, m.viewedCount(), len(m.files)), false)
+	return tea.Batch(m.setStatus(fmt.Sprintf("Viewed %s (%d/%d)", path, m.viewedCount(), len(m.files)), false), m.pushViewed(path, true))
 }
 
 // foldAllViewedDirs collapses every directory whose files are all viewed.

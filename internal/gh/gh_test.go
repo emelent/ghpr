@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"encoding/json"
 	"testing"
 
 	"ghpr/internal/diff"
@@ -84,5 +85,23 @@ func TestIsTooManyFiles(t *testing.T) {
 	}
 	if isTooManyFiles(&Error{Args: []string{"pr", "diff", "1"}, Stderr: "HTTP 404: Not Found"}) {
 		t.Fatal("other errors must not")
+	}
+}
+
+func TestViewedFilesResponseDecode(t *testing.T) {
+	raw := `{"data":{"repository":{"pullRequest":{"files":{"pageInfo":{"hasNextPage":true,"endCursor":"c2"},"nodes":[{"path":"a.go","viewerViewedState":"VIEWED"},{"path":"b.go","viewerViewedState":"UNVIEWED"},{"path":"c.go","viewerViewedState":"DISMISSED"}]}}}}}`
+	var resp viewedFilesResponse
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		t.Fatal(err)
+	}
+	files := resp.Data.Repository.PullRequest.Files
+	if !files.PageInfo.HasNextPage || files.PageInfo.EndCursor != "c2" || len(files.Nodes) != 3 || files.Nodes[0].State != "VIEWED" || files.Nodes[2].State != "DISMISSED" {
+		t.Fatalf("decoded %+v", files)
+	}
+	if err := graphqlErrors([]byte(`{"errors":[{"message":"bad"}]}`)); err == nil || err.Error() != "graphql: bad" {
+		t.Fatalf("graphqlErrors = %v", err)
+	}
+	if err := graphqlErrors([]byte(`{"data":{}}`)); err != nil {
+		t.Fatalf("clean response: %v", err)
 	}
 }

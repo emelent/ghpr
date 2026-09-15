@@ -120,7 +120,7 @@ The mouse works too: click a line to move the cursor there, drag (or `shift`+cli
 
 When the file panel is focused in tree mode: `j`/`k` move through directories and files, `enter`, `space` or `l` on a file opens it and returns focus to the diff; on a directory `enter`/`space` toggle it, `l` expands and `h` collapses (`h` on a file jumps to its directory), `H`/`L` collapse / expand everything. From the diff, `h` brings you back to the tree. Collapsed directories show file, viewed and change counts.
 | `s` | Toggle inline / side-by-side diff |
-| `m` | Mark / unmark the current file as viewed. Marking moves focus to the file tree so you can pick the next file. When every file in a folder is viewed the folder folds, and so do its parents up to the first folder with unviewed files. Fully viewed folders start folded when you open the PR. Viewed files show a ✓ in the file list and the header shows when you viewed them |
+| `m` | Mark / unmark the current file as viewed. Marking moves focus to the file tree so you can pick the next file. When every file in a folder is viewed the folder folds, and so do its parents up to the first folder with unviewed files. Fully viewed folders start folded when you open the PR. Viewed files show a ✓ in the file list and the header shows when you viewed them. Files you ticked as viewed on github.com are pulled in when the PR opens, and `m` pushes your mark back to GitHub |
 | `F` | Toggle full-file view. Fetches the file at the PR head and shows every line with the hunks in place. Comments are still limited to lines that are part of the diff, as GitHub requires |
 
 ### Reviewing
@@ -218,7 +218,9 @@ Every operation shells out to `gh`:
 - `gh pr review`, `gh pr comment` for reviews and PR comments
 - `gh pr merge`, `gh pr close`, `gh pr reopen` for merging, closing and reopening
 - `gh api` (REST) for creating, editing and deleting line comments and replies
-- `gh api graphql` for fetching review threads and resolving/unresolving them
+- `gh api graphql` for fetching review threads and resolving/unresolving them,
+  and for the "Viewed" ticks on files: they are pulled when a PR opens and
+  merged into the local marks, and `m` pushes yours back so github.com agrees
 
 ## Releases
 

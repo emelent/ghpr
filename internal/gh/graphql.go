@@ -37,6 +37,113 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   }
 }`
 
+const viewedFilesQuery = `
+query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      files(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { path viewerViewedState }
+      }
+    }
+  }
+}`
+
+type viewedFilesResponse struct {
+	Data struct {
+		Repository struct {
+			PullRequest struct {
+				Files struct {
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+					Nodes []struct {
+						Path  string `json:"path"`
+						State string `json:"viewerViewedState"` // VIEWED, UNVIEWED or DISMISSED
+					} `json:"nodes"`
+				} `json:"files"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+// ViewedFiles returns the paths the authenticated user has ticked as
+// "Viewed" on github.com for the PR. Files GitHub dismissed because they
+// changed since are not included.
+func (c *Client) ViewedFiles(number int) ([]string, error) {
+	owner, name := c.ownerName()
+	if owner == "" {
+		return nil, fmt.Errorf("repository must be owner/name, got %q", c.Repo)
+	}
+	var paths []string
+	cursor := ""
+	for {
+		args := []string{"api", "graphql",
+			"-f", "query=" + viewedFilesQuery,
+			"-f", "owner=" + owner,
+			"-f", "name=" + name,
+			"-F", fmt.Sprintf("number=%d", number),
+		}
+		if cursor != "" {
+			args = append(args, "-f", "cursor="+cursor)
+		}
+		out, err := run(nil, args...)
+		if err != nil {
+			return nil, err
+		}
+		var resp viewedFilesResponse
+		if err := json.Unmarshal(out, &resp); err != nil {
+			return nil, fmt.Errorf("decode viewed files: %w", err)
+		}
+		if len(resp.Errors) > 0 {
+			return nil, fmt.Errorf("graphql: %s", resp.Errors[0].Message)
+		}
+		files := resp.Data.Repository.PullRequest.Files
+		for _, n := range files.Nodes {
+			if n.State == "VIEWED" {
+				paths = append(paths, n.Path)
+			}
+		}
+		if !files.PageInfo.HasNextPage {
+			break
+		}
+		cursor = files.PageInfo.EndCursor
+	}
+	return paths, nil
+}
+
+// SetFileViewed ticks (or unticks) a file's "Viewed" box on github.com for
+// the authenticated user. prID is the pull request's GraphQL node id.
+func (c *Client) SetFileViewed(prID, path string, viewed bool) error {
+	mutation := "markFileAsViewed"
+	if !viewed {
+		mutation = "unmarkFileAsViewed"
+	}
+	query := fmt.Sprintf(`mutation($id: ID!, $path: String!) { %s(input: {pullRequestId: $id, path: $path}) { pullRequest { id } } }`, mutation)
+	out, err := run(nil, "api", "graphql", "-f", "query="+query, "-f", "id="+prID, "-f", "path="+path)
+	if err != nil {
+		return err
+	}
+	return graphqlErrors(out)
+}
+
+// graphqlErrors returns the first GraphQL error in a response, if any.
+func graphqlErrors(out []byte) error {
+	var resp struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(out, &resp); err == nil && len(resp.Errors) > 0 {
+		return fmt.Errorf("graphql: %s", resp.Errors[0].Message)
+	}
+	return nil
+}
+
 type threadsResponse struct {
 	Data struct {
 		Repository struct {
@@ -155,15 +262,7 @@ func (c *Client) mutateThread(mutation, threadID string) error {
 	if err != nil {
 		return err
 	}
-	var resp struct {
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
-	if err := json.Unmarshal(out, &resp); err == nil && len(resp.Errors) > 0 {
-		return fmt.Errorf("graphql: %s", resp.Errors[0].Message)
-	}
-	return nil
+	return graphqlErrors(out)
 }
 
 // ResolveThread marks a review thread as resolved.
