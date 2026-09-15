@@ -231,10 +231,11 @@ func (m *Model) clickFiles(y int) tea.Cmd {
 	}
 	m.filesFocused = true
 	if !m.tree {
-		if idx >= len(m.files) {
+		shown := m.shownFiles()
+		if idx >= len(shown) {
 			return nil
 		}
-		return m.selectFile(idx)
+		return m.selectFile(shown[idx])
 	}
 	if len(m.treeNodes) == 0 {
 		m.rebuildTree()

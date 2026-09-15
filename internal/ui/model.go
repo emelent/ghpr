@@ -81,9 +81,10 @@ type Model struct {
 	listItemH   int    // lines per list item (delegate height)
 	listItemGap int    // blank lines between items (delegate spacing)
 
-	fromPicker bool   // the PR was opened from the list; q returns to it
-	debugKeys  bool   // show every key name in the status bar
-	lastKey    string // most recent key name (debugKeys)
+	fromPicker  bool   // the PR was opened from the list; q returns to it
+	threadsOnly bool   // file list, navigation and search limited to files with review threads
+	debugKeys   bool   // show every key name in the status bar
+	lastKey     string // most recent key name (debugKeys)
 
 	// merge menu
 	mergeMethod gh.MergeMethod // chosen method awaiting confirmation ("" = none)
@@ -596,6 +597,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.threads = msg.threads
 		m.rebuildRows()
+		m.rebuildTree() // thread badges and the with-comments filter depend on it
 		return m, nil
 
 	case actionMsg:
@@ -840,9 +842,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "G", "end":
 		m.cursor = max(0, len(m.rows)-1)
 	case "]":
-		return m, m.selectFile(m.fileIdx + 1)
+		return m, m.stepFile(1)
 	case "[":
-		return m, m.selectFile(m.fileIdx - 1)
+		return m, m.stepFile(-1)
+	case "T":
+		return m, m.toggleThreadsOnly()
 	case "l", "right":
 		// Pan right while lines overflow the pane.
 		if ms := m.maxHScroll(); m.hscroll < ms {
@@ -946,6 +950,78 @@ func (m *Model) selectFile(i int) tea.Cmd {
 	return m.ensureFull()
 }
 
+// ---------- files-with-comments filter ----------
+
+// fileShown reports whether file i is listed. With the filter on, only
+// files that have review threads are, plus the current file so the view
+// never points at something hidden.
+func (m *Model) fileShown(i int) bool {
+	if !m.threadsOnly || i == m.fileIdx {
+		return true
+	}
+	_, total := m.threadCount(m.files[i].Path())
+	return total > 0
+}
+
+// shownFiles lists the indexes of the files that pass the filter, in order.
+func (m *Model) shownFiles() []int {
+	idx := make([]int, 0, len(m.files))
+	for i := range m.files {
+		if m.fileShown(i) {
+			idx = append(idx, i)
+		}
+	}
+	return idx
+}
+
+// stepFile moves to the next (dir > 0) or previous shown file.
+func (m *Model) stepFile(dir int) tea.Cmd {
+	shown := m.shownFiles()
+	for k, i := range shown {
+		if i == m.fileIdx {
+			k += dir
+			if k < 0 || k >= len(shown) {
+				return nil
+			}
+			return m.selectFile(shown[k])
+		}
+	}
+	return nil
+}
+
+// toggleThreadsOnly switches the filter. Turning it on with no threads at
+// all is refused; turning it on while on a file without threads moves to
+// the first file that has some.
+func (m *Model) toggleThreadsOnly() tea.Cmd {
+	if len(m.files) == 0 {
+		return nil
+	}
+	if m.threadsOnly {
+		m.threadsOnly = false
+		m.fileScroll = 0
+		m.revealFile(m.fileIdx)
+		return nil
+	}
+	first := -1
+	for i := range m.files {
+		if _, total := m.threadCount(m.files[i].Path()); total > 0 {
+			first = i
+			break
+		}
+	}
+	if first < 0 {
+		return m.setStatus("No files with comments in this PR", true)
+	}
+	m.threadsOnly = true
+	m.fileScroll = 0
+	var cmd tea.Cmd
+	if _, total := m.threadCount(m.files[m.fileIdx].Path()); total == 0 {
+		cmd = m.selectFile(first)
+	}
+	m.revealFile(m.fileIdx)
+	return cmd
+}
+
 // contentWidth is the number of columns available for line text.
 func (m *Model) contentWidth() int {
 	w := m.diffWidth()
@@ -964,7 +1040,7 @@ func (m *Model) hscrollStep() int { return max(8, m.contentWidth()/4) }
 
 // rebuildTree recomputes the visible tree nodes.
 func (m *Model) rebuildTree() {
-	m.treeNodes = buildTree(m.files, m.collapsed, m.isViewed)
+	m.treeNodes = buildTree(m.files, m.collapsed, m.isViewed, m.fileShown)
 }
 
 // revealFile expands the ancestors of file i and selects it in the panel.
@@ -1006,15 +1082,16 @@ func (m *Model) handleFilesKey(key string) (bool, tea.Cmd) {
 		return false, nil
 	}
 	if !m.tree {
+		shown := m.shownFiles()
 		switch key {
 		case "j", "down":
-			return true, m.selectFile(m.fileIdx + 1)
+			return true, m.stepFile(1)
 		case "k", "up":
-			return true, m.selectFile(m.fileIdx - 1)
+			return true, m.stepFile(-1)
 		case "g", "home":
-			return true, m.selectFile(0)
+			return true, m.selectFile(shown[0])
 		case "G", "end":
-			return true, m.selectFile(len(m.files) - 1)
+			return true, m.selectFile(shown[len(shown)-1])
 		case "enter", "space", "l", "right":
 			m.filesFocused = false
 			return true, nil
@@ -1923,7 +2000,7 @@ func (m *Model) foldAllViewedDirs() {
 	if !m.tree || m.store == nil || len(m.files) == 0 {
 		return
 	}
-	for _, n := range buildTree(m.files, map[string]bool{}, m.isViewed) {
+	for _, n := range buildTree(m.files, map[string]bool{}, m.isViewed, m.fileShown) {
 		if n.isDir && n.files > 0 && n.viewed == n.files {
 			m.collapsed[n.path] = true
 		}

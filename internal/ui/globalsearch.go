@@ -96,6 +96,9 @@ func (m *Model) refilterGlobal() {
 	}
 	var fuzzy []gsHit
 	for fi := range m.files {
+		if !m.fileShown(fi) {
+			continue
+		}
 		f := &m.files[fi]
 		for hi := range f.Hunks {
 			for li := range f.Hunks[hi].Lines {

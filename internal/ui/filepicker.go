@@ -22,11 +22,14 @@ type fpMatch struct {
 	matched []int // byte offsets into the path that matched the query
 }
 
-// filePaths lets the fuzzy matcher read the diff's file paths.
-type filePaths []diff.File
+// filePaths lets the fuzzy matcher read the paths of the shown files.
+type filePaths struct {
+	files []diff.File
+	idx   []int // indexes into files that are offered
+}
 
-func (p filePaths) String(i int) string { return p[i].Path() }
-func (p filePaths) Len() int            { return len(p) }
+func (p filePaths) String(i int) string { return p.files[p.idx[i]].Path() }
+func (p filePaths) Len() int            { return len(p.idx) }
 
 // openFilePicker opens the fuzzy file finder over the diff's files.
 func (m *Model) openFilePicker() {
@@ -44,13 +47,14 @@ func (m *Model) openFilePicker() {
 func (m *Model) refilterFiles() {
 	m.fpResults = m.fpResults[:0]
 	q := strings.ReplaceAll(m.fpQuery, " ", "")
+	shown := m.shownFiles()
 	if q == "" {
-		for i := range m.files {
+		for _, i := range shown {
 			m.fpResults = append(m.fpResults, fpMatch{fileIdx: i})
 		}
 	} else {
-		for _, r := range fuzzy.FindFrom(q, filePaths(m.files)) {
-			m.fpResults = append(m.fpResults, fpMatch{fileIdx: r.Index, matched: r.MatchedIndexes})
+		for _, r := range fuzzy.FindFrom(q, filePaths{files: m.files, idx: shown}) {
+			m.fpResults = append(m.fpResults, fpMatch{fileIdx: shown[r.Index], matched: r.MatchedIndexes})
 		}
 	}
 	if m.fpIdx >= len(m.fpResults) {
@@ -101,7 +105,7 @@ func (m *Model) handleFilePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // renderFilePicker draws the picker in place of the diff pane.
 func (m *Model) renderFilePicker(width, height int) []string {
-	title := styTitle.Render(" Go to file") + styDim.Render(fmt.Sprintf("  %d of %d", len(m.fpResults), len(m.files)))
+	title := styTitle.Render(" Go to file") + styDim.Render(fmt.Sprintf("  %d of %d", len(m.fpResults), len(m.shownFiles())))
 	lines := []string{
 		padRight(truncate(title, width), width),
 		styBorder.Render(strings.Repeat("─", width)),

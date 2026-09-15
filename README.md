@@ -113,6 +113,7 @@ Press `?` inside the app for this list.
 | `tab` | Switch focus between file list and diff |
 | `f` | Show / hide the file list |
 | `t` | File list as a directory tree (default) or a flat list |
+| `T` | Show only files that have review threads. The file list, `]` / `[`, `ctrl+p` and `ctrl+/` all follow the filter; press again to see every file |
 
 The mouse works too: click a line to move the cursor there, drag (or `shift`+click) to select a range for a multi-line comment, and use the wheel to scroll. In the file list, click a file to open it or a folder to fold / unfold it, and the wheel moves through the list. In the pull request list, click a PR to select it and click it again to open it.
 

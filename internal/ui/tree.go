@@ -33,10 +33,14 @@ func newDir(name string) *dirEntry {
 
 // buildTree returns the visible nodes of the file tree given which
 // directories are collapsed. Directory chains with a single child directory
-// and no files are compacted into one node ("a/b/c").
-func buildTree(files []diff.File, collapsed map[string]bool, isViewed func(string) bool) []treeNode {
+// and no files are compacted into one node ("a/b/c"). shown, when non-nil,
+// filters the files by index; directories with no shown files are omitted.
+func buildTree(files []diff.File, collapsed map[string]bool, isViewed func(string) bool, shown func(int) bool) []treeNode {
 	root := newDir("")
 	for i := range files {
+		if shown != nil && !shown(i) {
+			continue
+		}
 		parts := strings.Split(files[i].Path(), "/")
 		d := root
 		for _, p := range parts[:len(parts)-1] {

@@ -245,6 +245,9 @@ func (m *Model) threadCount(path string) (open, total int) {
 func (m *Model) renderFiles(width, height int) []string {
 	lines := make([]string, 0, height)
 	title := styTitle.Render(fmt.Sprintf(" Files (%d)", len(m.files)))
+	if m.threadsOnly {
+		title = styTitle.Render(fmt.Sprintf(" Files (%d of %d)", len(m.shownFiles()), len(m.files))) + styWarn.Render(" · with comments")
+	}
 	if m.store != nil && len(m.files) > 0 {
 		title += styDim.Render(fmt.Sprintf(" · %d viewed", m.viewedCount()))
 	}
@@ -258,13 +261,21 @@ func (m *Model) renderFiles(width, height int) []string {
 		return m.renderTree(lines, width, height, avail)
 	}
 	// Keep selection visible.
-	if m.fileIdx < m.fileScroll {
-		m.fileScroll = m.fileIdx
+	shown := m.shownFiles()
+	pos := 0
+	for k, i := range shown {
+		if i == m.fileIdx {
+			pos = k
+		}
 	}
-	if m.fileIdx >= m.fileScroll+avail {
-		m.fileScroll = m.fileIdx - avail + 1
+	if pos < m.fileScroll {
+		m.fileScroll = pos
 	}
-	for i := m.fileScroll; i < len(m.files) && len(lines) < height; i++ {
+	if pos >= m.fileScroll+avail {
+		m.fileScroll = pos - avail + 1
+	}
+	for k := m.fileScroll; k < len(shown) && len(lines) < height; k++ {
+		i := shown[k]
 		f := &m.files[i]
 		open, total := m.threadCount(f.Path())
 		badge := ""
@@ -673,6 +684,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"l (file tree)", "open the selected file"},
 		{"f", "toggle file list"},
 		{"t", "file list: tree / flat"},
+		{"T", "show only files with review threads (file list, ] / [, ctrl+p and ctrl+/ follow it)"},
 		{"enter / l, h, H / L", "file tree: open file or expand dir, collapse (or go to parent), collapse / expand all"},
 		{"s", "toggle inline / side-by-side"},
 		{"F", "toggle full file view (whole file with changes in place)"},
