@@ -71,12 +71,20 @@ func numStr(n, w int) string {
 func (m *Model) renderUnified(l *diff.Line, st rowState, width, numW int) string {
 	bg := lineBg(l.Kind, st)
 	sign, signFg := signOf(l.Kind)
-	gut := lipgloss.NewStyle().Background(bg).Foreground(colNumFg).Render(
-		numStr(l.OldNum, numW) + " " + numStr(l.NewNum, numW) + " ")
+	gut := m.gutterStyle(l, bg).Render(numStr(l.OldNum, numW) + " " + numStr(l.NewNum, numW) + " ")
 	sg := lipgloss.NewStyle().Background(bg).Foreground(signFg).Bold(true).Render(sign + " ")
 	gutW := numW*2 + 4
 	content := renderSpans(m.lineSpans(l), bg, width-gutW, m.hscroll)
 	return gut + sg + content
+}
+
+// gutterStyle styles line numbers; a line with a note (a) gets the note colour.
+func (m *Model) gutterStyle(l *diff.Line, bg color.Color) lipgloss.Style {
+	st := lipgloss.NewStyle().Background(bg).Foreground(colNumFg)
+	if m.noteIndexForLine(l) >= 0 {
+		st = st.Foreground(colWarn).Bold(true)
+	}
+	return st
 }
 
 // renderHalf renders "num ± content" for one side of a split row.
@@ -91,7 +99,7 @@ func (m *Model) renderHalf(l *diff.Line, st rowState, width, numW int) string {
 	if l.Kind == diff.Del {
 		n = l.OldNum
 	}
-	gut := lipgloss.NewStyle().Background(bg).Foreground(colNumFg).Render(numStr(n, numW) + " ")
+	gut := m.gutterStyle(l, bg).Render(numStr(n, numW) + " ")
 	sg := lipgloss.NewStyle().Background(bg).Foreground(signFg).Bold(true).Render(sign + " ")
 	gutW := numW + 3
 	return gut + sg + renderSpans(m.lineSpans(l), bg, width-gutW, m.hscroll)
@@ -590,6 +598,9 @@ func (m *Model) renderStatus(width int) string {
 	case m.overlay == overlayGlobal:
 		left = styBar.Render(" Search all files: type to search  ") + styBarKey.Render("↑/↓") + styBar.Render(" choose  ") +
 			styBarKey.Render("enter") + styBar.Render(" jump  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
+	case m.overlay == overlayNote:
+		left = styBar.Render(" ⚑ Add note at "+m.ntPending.location()+": "+m.ntInput) + styBarKey.Render("▏") +
+			styBar.Render("  ") + styBarKey.Render("enter") + styBar.Render(" save  ") + styBarKey.Render("esc") + styBar.Render(" cancel")
 	case m.overlay == overlaySearch:
 		count := ""
 		if m.searchInput != "" {
@@ -609,6 +620,10 @@ func (m *Model) renderStatus(width int) string {
 		} else {
 			left = lipgloss.NewStyle().Background(colBarBg).Foreground(colOK).Render(" ✓ " + m.status)
 		}
+	case m.overlay == overlayNone && m.screen == screenDiff && m.rowNoteIndex(m.cursor) >= 0:
+		nt := m.notes[m.rowNoteIndex(m.cursor)]
+		left = lipgloss.NewStyle().Background(colBarBg).Foreground(colWarn).Bold(true).Render(" ⚑ "+nt.body) +
+			styBar.Render("  ") + styBarKey.Render("a") + styBar.Render(" remove note  ") + styBarKey.Render("A") + styBar.Render(fmt.Sprintf(" all notes (%d)", len(m.notes)))
 	case m.searchQ != "" && m.overlay == overlayNone:
 		pos, total := m.matchPos()
 		where := fmt.Sprintf("%d match(es)", total)
@@ -629,6 +644,9 @@ func (m *Model) renderStatus(width int) string {
 	case m.screen == screenComments:
 		right = styBarKey.Render("j/k") + styBarDim.Render(" move  ") + styBarKey.Render("l") + styBarDim.Render(" open in diff  ") +
 			styBarKey.Render("esc") + styBarDim.Render(" close ")
+	case m.screen == screenNotes:
+		right = styBarKey.Render("j/k") + styBarDim.Render(" move  ") + styBarKey.Render("l") + styBarDim.Render(" go to line  ") +
+			styBarKey.Render("d") + styBarDim.Render(" remove  ") + styBarKey.Render("esc") + styBarDim.Render(" close ")
 	case m.screen == screenPicker:
 		right = styBarKey.Render("enter/l") + styBarDim.Render(" open  ") + styBarKey.Render("s") + styBarDim.Render(" state: "+m.listState+"  ") +
 			styBarKey.Render("/") + styBarDim.Render(" filter  ") + styBarKey.Render("q") + styBarDim.Render(" quit ")
@@ -689,6 +707,8 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"t", "file list: tree / flat"},
 		{"T", "show only files with review threads (file list, ] / [, ctrl+p and ctrl+/ follow it)"},
 		{"i", "comments screen: every thread with its code line and first comment; j/k move, l opens it in the diff (h there comes back), esc closes"},
+		{"a", "add a note on the current line to come back to (press again to remove it); noted lines get amber line numbers; notes are kept per PR"},
+		{"A", "notes screen: your notes with their lines; j/k move, l jumps there (h comes back), d removes, esc closes"},
 		{"enter / l, h, H / L", "file tree: open file or expand dir, collapse (or go to parent), collapse / expand all"},
 		{"s", "toggle inline / side-by-side"},
 		{"F", "toggle full file view (whole file with changes in place)"},

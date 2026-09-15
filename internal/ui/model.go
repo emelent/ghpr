@@ -31,6 +31,7 @@ const (
 	screenPicker screen = iota
 	screenDiff
 	screenComments // every review thread, with its code and first comment
+	screenNotes    // the reviewer's notes on lines
 )
 
 type overlayKind int
@@ -46,6 +47,7 @@ const (
 	overlaySearch // typing a / search query
 	overlayFiles  // fuzzy file picker
 	overlayGlobal // search across every file (ctrl+/)
+	overlayNote   // typing the text of a new line note (a)
 	overlayHelp
 )
 
@@ -86,12 +88,19 @@ type Model struct {
 	threadsOnly bool // file list, navigation and search limited to files with review threads
 
 	// comments screen
-	cmThreads    []*gh.Thread // threads in file/line order
-	cmIdx        int          // selected thread
-	cmScroll     int          // first visible thread
-	fromComments bool         // the diff was entered from the comments screen; h returns there
-	debugKeys    bool         // show every key name in the status bar
-	lastKey      string       // most recent key name (debugKeys)
+	cmThreads []*gh.Thread // threads in file/line order
+	cmIdx     int          // selected thread
+	cmScroll  int          // first visible thread
+	backTo    screen       // list screen (comments/notes) the diff was entered from; h returns there
+
+	// notes on lines (session only)
+	notes     []lineNote
+	ntIdx     int      // selected note in the notes screen
+	ntScroll  int      // first visible note
+	ntPending lineNote // note awaiting its text
+	ntInput   string   // note text being typed
+	debugKeys bool     // show every key name in the status bar
+	lastKey   string   // most recent key name (debugKeys)
 
 	// merge menu
 	mergeMethod gh.MergeMethod // chosen method awaiting confirmation ("" = none)
@@ -649,6 +658,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fingerprints[i] = m.files[i].Fingerprint()
 		}
 		dropped := m.reconcileViewed()
+		m.loadNotes()
 		m.spanCache = map[int]map[*diff.Line][]Span{}
 		m.fullFiles = map[int]*diff.File{}
 		m.fullSpans = map[int]map[*diff.Line][]Span{}
@@ -770,6 +780,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.screen == screenComments {
 		return m.handleCommentsKey(key)
 	}
+	if m.screen == screenNotes {
+		return m.handleNotesKey(key)
+	}
 
 	switch m.overlay {
 	case overlayInput:
@@ -819,6 +832,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case overlayGlobal:
 		return m.handleGlobalSearchKey(msg)
+
+	case overlayNote:
+		return m.handleNoteKey(msg)
 
 	case overlayState:
 		switch key {
@@ -957,6 +973,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.toggleThreadsOnly()
 	case "i":
 		return m, m.openComments()
+	case "a":
+		return m, m.toggleNote()
+	case "A":
+		return m, m.openNotes()
 	case "l", "right":
 		// Pan right while lines overflow the pane.
 		if ms := m.maxHScroll(); m.hscroll < ms {
@@ -969,9 +989,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.hscroll = max(0, m.hscroll-m.hscrollStep())
 			return m, nil
 		}
-		if m.fromComments {
-			m.buildCommentList()
-			m.screen = screenComments
+		if m.hasBack() {
+			if m.backTo == screenComments {
+				m.buildCommentList()
+			}
+			m.screen = m.backTo
 			return m, nil
 		}
 		m.showFiles = true
@@ -1809,6 +1831,11 @@ func (m *Model) currentNewLine() int {
 	return 0
 }
 
+// hasBack reports whether the diff was entered from a list screen that h
+// should return to. Only the comments and notes screens qualify; the zero
+// value of backTo (the PR picker) means none.
+func (m *Model) hasBack() bool { return m.backTo == screenComments || m.backTo == screenNotes }
+
 // openSelectedPR leaves the picker for the highlighted pull request.
 func (m *Model) openSelectedPR() tea.Cmd {
 	it, ok := m.list.SelectedItem().(prItem)
@@ -1833,8 +1860,9 @@ func (m *Model) backToList() tea.Cmd {
 	m.busy = ""
 	m.status = ""
 	m.searchQ = ""
-	m.fromComments = false
+	m.backTo = screenDiff
 	m.cmThreads = nil
+	m.notes = nil
 	m.clearSelection()
 	m.closeInput()
 	m.fromPicker = false
@@ -1962,6 +1990,9 @@ func (m *Model) view() string {
 	mainH := m.mainHeight()
 	if m.screen == screenComments {
 		return strings.Join(header, "\n") + "\n" + strings.Join(m.renderComments(m.width, mainH), "\n") + "\n" + m.renderStatus(m.width)
+	}
+	if m.screen == screenNotes {
+		return strings.Join(header, "\n") + "\n" + strings.Join(m.renderNotes(m.width, mainH), "\n") + "\n" + m.renderStatus(m.width)
 	}
 	dw := m.diffWidth()
 

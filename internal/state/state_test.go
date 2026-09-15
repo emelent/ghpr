@@ -65,3 +65,50 @@ func TestDirOverride(t *testing.T) {
 		t.Fatalf("dir %q err %v", d, err)
 	}
 }
+
+func TestNotesRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := PRKey("o/r", 7)
+	if got := s.GetNotes(pr); len(got) != 0 {
+		t.Fatalf("fresh store has notes: %v", got)
+	}
+	notes := []Note{
+		{Path: "a.go", NewLine: 4, Kind: "add", Text: `"fmt"`, Body: "check import order", CreatedAt: time.Now().Truncate(time.Second)},
+		{Path: "a.go", OldLine: 3, Kind: "del", Text: `import "fmt"`, Body: "why removed?", CreatedAt: time.Now().Truncate(time.Second)},
+	}
+	s.SetNotes(pr, notes)
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := s2.GetNotes(pr)
+	if len(got) != 2 || got[0].Body != "check import order" || got[0].NewLine != 4 || got[1].OldLine != 3 || got[1].Kind != "del" || !got[1].CreatedAt.Equal(notes[1].CreatedAt) {
+		t.Fatalf("round trip: %+v", got)
+	}
+	// Mutating the returned slice does not touch the store.
+	got[0].Body = "changed"
+	if s2.GetNotes(pr)[0].Body != "check import order" {
+		t.Fatal("GetNotes should return a copy")
+	}
+	// Emptying removes the PR entry entirely.
+	s2.SetNotes(pr, nil)
+	if _, ok := s2.Notes[pr]; ok {
+		t.Fatal("empty notes should drop the key")
+	}
+	// Viewed marks and last position are unaffected by notes.
+	s2.Set(pr, "a.go", Viewed{ViewedAt: time.Now(), Fingerprint: "x"})
+	if err := s2.Save(); err != nil {
+		t.Fatal(err)
+	}
+	s3, _ := Open(dir)
+	if _, ok := s3.Get(pr, "a.go"); !ok || len(s3.GetNotes(pr)) != 0 {
+		t.Fatal("viewed marks and notes are independent")
+	}
+}

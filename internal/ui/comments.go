@@ -84,7 +84,7 @@ func (m *Model) buildCommentList() {
 // closeComments returns to the diff.
 func (m *Model) closeComments() {
 	m.screen = screenDiff
-	m.fromComments = false
+	m.backTo = screenDiff
 }
 
 // handleCommentsKey drives the comments screen.
@@ -136,7 +136,7 @@ func (m *Model) openCommentThread() tea.Cmd {
 		return m.setStatus("Thread's file is not in the diff: "+t.Path, true)
 	}
 	m.screen = screenDiff
-	m.fromComments = true
+	m.backTo = screenComments
 	m.filesFocused = false
 	cmd := m.selectFile(fi)
 	for i := range m.rows {

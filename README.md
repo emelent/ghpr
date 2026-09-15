@@ -115,6 +115,8 @@ Press `?` inside the app for this list.
 | `t` | File list as a directory tree (default) or a flat list |
 | `T` | Show only files that have review threads. The file list, `]` / `[`, `ctrl+p` and `ctrl+/` all follow the filter; press again to see every file |
 | `i` | Comments screen: every review thread with its file and line, the code line it points at and the first comment, ordered by file. `j`/`k` move, `l` or `enter` opens the thread in the diff, `h` there comes back to the list, `esc` closes it. Click a thread to select it, click again to open |
+| `a` | Add a note on the line under the cursor, for something to come back to. You are asked for the text (what you wanted to do there); `enter` saves, `esc` cancels. Lines with a note show amber line numbers and the note in the status bar; `a` on such a line removes the note. Notes are saved per pull request alongside the viewed marks, so they are there again when you reopen the PR |
+| `A` | Notes screen: every note with its file, line and code. `j`/`k` move, `l` or `enter` jumps to the line in the diff, `h` there comes back to the list, `d` removes a note, `esc` closes |
 
 The mouse works too: click a line to move the cursor there, drag (or `shift`+click) to select a range for a multi-line comment, and use the wheel to scroll. In the file list, click a file to open it or a folder to fold / unfold it, and the wheel moves through the list. In the pull request list, click a PR to select it and click it again to open it.
 

@@ -1,5 +1,6 @@
 // Package state persists small per-user review state, such as which files
-// of a pull request have been marked as viewed, in a JSON file.
+// of a pull request have been marked as viewed and the reviewer's notes on
+// lines, in a JSON file.
 package state
 
 import (
@@ -30,12 +31,24 @@ type Position struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// Store is the on-disk state. Keys of Viewed and Last are "owner/repo#123";
-// Viewed is further keyed by file path within the PR.
+// Note is a reviewer's note on a diff line, something to come back to.
+type Note struct {
+	Path      string    `json:"path"`
+	OldLine   int       `json:"oldLine,omitempty"` // old-side line; the note is on a removed line when NewLine is 0
+	NewLine   int       `json:"newLine,omitempty"` // new-side line
+	Kind      string    `json:"kind,omitempty"`    // context, add or del
+	Text      string    `json:"text,omitempty"`    // code on the line when the note was made
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// Store is the on-disk state. Keys of Viewed, Last and Notes are
+// "owner/repo#123"; Viewed is further keyed by file path within the PR.
 type Store struct {
 	path   string
 	Viewed map[string]map[string]Viewed `json:"viewed"`
 	Last   map[string]Position          `json:"last,omitempty"`
+	Notes  map[string][]Note            `json:"notes,omitempty"`
 }
 
 // Dir returns the directory used for state: $GHPR_STATE_DIR, otherwise
@@ -54,7 +67,7 @@ func Dir() (string, error) {
 // Open loads the store from dir (creating an empty one when the file does
 // not exist yet).
 func Open(dir string) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, "viewed.json"), Viewed: map[string]map[string]Viewed{}, Last: map[string]Position{}}
+	s := &Store{path: filepath.Join(dir, "viewed.json"), Viewed: map[string]map[string]Viewed{}, Last: map[string]Position{}, Notes: map[string][]Note{}}
 	b, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
@@ -71,7 +84,24 @@ func Open(dir string) (*Store, error) {
 	if s.Last == nil {
 		s.Last = map[string]Position{}
 	}
+	if s.Notes == nil {
+		s.Notes = map[string][]Note{}
+	}
 	return s, nil
+}
+
+// GetNotes returns the notes recorded for a PR, in creation order.
+func (s *Store) GetNotes(pr string) []Note {
+	return append([]Note(nil), s.Notes[pr]...)
+}
+
+// SetNotes replaces the notes for a PR; an empty list removes the entry.
+func (s *Store) SetNotes(pr string, notes []Note) {
+	if len(notes) == 0 {
+		delete(s.Notes, pr)
+		return
+	}
+	s.Notes[pr] = append([]Note(nil), notes...)
 }
 
 // Path returns the backing file.

@@ -64,6 +64,32 @@ func (m *Model) handleMouse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.screen == screenNotes {
+		switch e := msg.(type) {
+		case tea.MouseWheelMsg:
+			switch e.Button {
+			case tea.MouseWheelUp:
+				if m.ntIdx > 0 {
+					m.ntIdx--
+				}
+			case tea.MouseWheelDown:
+				if m.ntIdx+1 < len(m.notes) {
+					m.ntIdx++
+				}
+			}
+		case tea.MouseClickMsg:
+			if e.Button != tea.MouseLeft {
+				return m, nil
+			}
+			if i := m.noteAtY(e.Y); i >= 0 {
+				if i == m.ntIdx {
+					return m, m.openNote()
+				}
+				m.ntIdx = i
+			}
+		}
+		return m, nil
+	}
 	if m.overlay == overlayHelp {
 		if _, ok := msg.(tea.MouseClickMsg); ok {
 			m.overlay = overlayNone

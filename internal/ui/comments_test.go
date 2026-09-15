@@ -75,8 +75,8 @@ func TestCommentsScreen(t *testing.T) {
 		t.Fatalf("idx=%d", m.cmIdx)
 	}
 	press("l")
-	if m.screen != screenDiff || !m.fromComments || m.fileIdx != 0 {
-		t.Fatalf("l should open the diff: screen=%v from=%v file=%d", m.screen, m.fromComments, m.fileIdx)
+	if m.screen != screenDiff || m.backTo != screenComments || m.fileIdx != 0 {
+		t.Fatalf("l should open the diff: screen=%v back=%v file=%d", m.screen, m.backTo, m.fileIdx)
 	}
 	if r := m.currentRow(); r == nil || r.kind != rowThread || r.thread.ID != "T1" {
 		t.Fatalf("cursor should be on T1: row=%d", m.cursor)
@@ -98,8 +98,8 @@ func TestCommentsScreen(t *testing.T) {
 	}
 	press("h")
 	press("esc")
-	if m.screen != screenDiff || m.fromComments {
-		t.Fatalf("esc closes the comments screen: screen=%v from=%v", m.screen, m.fromComments)
+	if m.screen != screenDiff || m.hasBack() {
+		t.Fatalf("esc closes the comments screen: screen=%v back=%v", m.screen, m.backTo)
 	}
 	// Without the comments screen, h at the left edge focuses the file tree.
 	press("h")
@@ -131,7 +131,7 @@ func TestCommentsScreen(t *testing.T) {
 		t.Fatal("clicking the selected thread opens it")
 	}
 	// No threads: i reports it and stays in the diff.
-	m.fromComments = false
+	m.backTo = screenDiff
 	m.Update(threadsMsg{threads: nil})
 	press("i")
 	if m.screen != screenDiff || !strings.Contains(m.status, "No review threads") {
