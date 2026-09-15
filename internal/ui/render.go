@@ -626,6 +626,9 @@ func (m *Model) renderStatus(width int) string {
 		right = styBarKey.Render("ctrl+s") + styBarDim.Render(" merge  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
 	case m.overlay == overlayInput:
 		right = styBarKey.Render("ctrl+s") + styBarDim.Render(" submit  ") + styBarKey.Render("esc") + styBarDim.Render(" cancel ")
+	case m.screen == screenComments:
+		right = styBarKey.Render("j/k") + styBarDim.Render(" move  ") + styBarKey.Render("l") + styBarDim.Render(" open in diff  ") +
+			styBarKey.Render("esc") + styBarDim.Render(" close ")
 	case m.screen == screenPicker:
 		right = styBarKey.Render("enter/l") + styBarDim.Render(" open  ") + styBarKey.Render("s") + styBarDim.Render(" state: "+m.listState+"  ") +
 			styBarKey.Render("/") + styBarDim.Render(" filter  ") + styBarKey.Render("q") + styBarDim.Render(" quit ")
@@ -685,6 +688,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{"f", "toggle file list"},
 		{"t", "file list: tree / flat"},
 		{"T", "show only files with review threads (file list, ] / [, ctrl+p and ctrl+/ follow it)"},
+		{"i", "comments screen: every thread with its code line and first comment; j/k move, l opens it in the diff (h there comes back), esc closes"},
 		{"enter / l, h, H / L", "file tree: open file or expand dir, collapse (or go to parent), collapse / expand all"},
 		{"s", "toggle inline / side-by-side"},
 		{"F", "toggle full file view (whole file with changes in place)"},

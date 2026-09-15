@@ -38,6 +38,32 @@ func (m *Model) handleMouse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.screen == screenComments {
+		switch e := msg.(type) {
+		case tea.MouseWheelMsg:
+			switch e.Button {
+			case tea.MouseWheelUp:
+				if m.cmIdx > 0 {
+					m.cmIdx--
+				}
+			case tea.MouseWheelDown:
+				if m.cmIdx+1 < len(m.cmThreads) {
+					m.cmIdx++
+				}
+			}
+		case tea.MouseClickMsg:
+			if e.Button != tea.MouseLeft {
+				return m, nil
+			}
+			if i := m.commentAtY(e.Y); i >= 0 {
+				if i == m.cmIdx {
+					return m, m.openCommentThread()
+				}
+				m.cmIdx = i
+			}
+		}
+		return m, nil
+	}
 	if m.overlay == overlayHelp {
 		if _, ok := msg.(tea.MouseClickMsg); ok {
 			m.overlay = overlayNone

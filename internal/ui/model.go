@@ -30,6 +30,7 @@ type screen int
 const (
 	screenPicker screen = iota
 	screenDiff
+	screenComments // every review thread, with its code and first comment
 )
 
 type overlayKind int
@@ -81,10 +82,16 @@ type Model struct {
 	listItemH   int    // lines per list item (delegate height)
 	listItemGap int    // blank lines between items (delegate spacing)
 
-	fromPicker  bool   // the PR was opened from the list; q returns to it
-	threadsOnly bool   // file list, navigation and search limited to files with review threads
-	debugKeys   bool   // show every key name in the status bar
-	lastKey     string // most recent key name (debugKeys)
+	fromPicker  bool // the PR was opened from the list; q returns to it
+	threadsOnly bool // file list, navigation and search limited to files with review threads
+
+	// comments screen
+	cmThreads    []*gh.Thread // threads in file/line order
+	cmIdx        int          // selected thread
+	cmScroll     int          // first visible thread
+	fromComments bool         // the diff was entered from the comments screen; h returns there
+	debugKeys    bool         // show every key name in the status bar
+	lastKey      string       // most recent key name (debugKeys)
 
 	// merge menu
 	mergeMethod gh.MergeMethod // chosen method awaiting confirmation ("" = none)
@@ -598,6 +605,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.threads = msg.threads
 		m.rebuildRows()
 		m.rebuildTree() // thread badges and the with-comments filter depend on it
+		m.buildCommentList()
 		return m, nil
 
 	case actionMsg:
@@ -661,6 +669,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
+	}
+
+	if m.screen == screenComments {
+		return m.handleCommentsKey(key)
 	}
 
 	switch m.overlay {
@@ -847,15 +859,23 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.stepFile(-1)
 	case "T":
 		return m, m.toggleThreadsOnly()
+	case "i":
+		return m, m.openComments()
 	case "l", "right":
 		// Pan right while lines overflow the pane.
 		if ms := m.maxHScroll(); m.hscroll < ms {
 			m.hscroll = min(m.hscroll+m.hscrollStep(), ms)
 		}
 	case "h", "left":
-		// Pan back left; at the left edge move into the file tree.
+		// Pan back left; at the left edge go back to the comments screen
+		// when we came from it, otherwise move into the file tree.
 		if m.hscroll > 0 {
 			m.hscroll = max(0, m.hscroll-m.hscrollStep())
+			return m, nil
+		}
+		if m.fromComments {
+			m.buildCommentList()
+			m.screen = screenComments
 			return m, nil
 		}
 		m.showFiles = true
@@ -1717,6 +1737,8 @@ func (m *Model) backToList() tea.Cmd {
 	m.busy = ""
 	m.status = ""
 	m.searchQ = ""
+	m.fromComments = false
+	m.cmThreads = nil
 	m.clearSelection()
 	m.closeInput()
 	m.fromPicker = false
@@ -1842,6 +1864,9 @@ func (m *Model) view() string {
 
 	header := m.renderHeader(m.width)
 	mainH := m.mainHeight()
+	if m.screen == screenComments {
+		return strings.Join(header, "\n") + "\n" + strings.Join(m.renderComments(m.width, mainH), "\n") + "\n" + m.renderStatus(m.width)
+	}
 	dw := m.diffWidth()
 
 	var right []string
