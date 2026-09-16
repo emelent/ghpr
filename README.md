@@ -15,7 +15,7 @@ reuses your existing `gh` login and works with any host `gh` is configured for.
 - File tree (or flat list) with per-file change counts and open/resolved thread badges; directories collapse and single-child paths are compacted
 - Review threads rendered inline under the lines they belong to
 - Create single-line and multi-line comments, reply to threads, resolve/unresolve threads, delete your own comments
-- Submit reviews: approve, request changes, or comment
+- Submit reviews: approve, request changes, or comment. The PR header and the picker show who has approved (✓) and who has requested changes (✗), from each reviewer's latest review
 - Merge the PR (merge commit, squash or rebase, optionally deleting the branch), editing the commit message first; the header shows the merge state
 - Close and reopen PRs
 - PR picker with text filter and open / closed / merged / all state filter

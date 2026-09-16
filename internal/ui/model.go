@@ -368,7 +368,24 @@ func (p prItem) Description() string {
 	if p.s.State != "" && p.s.State != "OPEN" {
 		prefix = p.s.State + " · "
 	}
+	if who := reviewersLine(p.s.LatestReviews); who != "" {
+		d += " " + who
+	}
 	return fmt.Sprintf("%s@%s · %s · %s · updated %s", prefix, p.s.Author.Login, p.s.HeadRefName, d, ago(p.s.UpdatedAt))
+}
+
+// reviewersLine summarises who approved (✓) and who requested changes (✗),
+// e.g. "✓ alice, bob ✗ carol"; "" when nobody did either.
+func reviewersLine(reviews []gh.ReviewState) string {
+	approved, changes := gh.Approvers(reviews)
+	var parts []string
+	if len(approved) > 0 {
+		parts = append(parts, "✓ "+strings.Join(approved, ", "))
+	}
+	if len(changes) > 0 {
+		parts = append(parts, "✗ "+strings.Join(changes, ", "))
+	}
+	return strings.Join(parts, " ")
 }
 func (p prItem) FilterValue() string {
 	return p.Title() + " " + p.s.Author.Login + " " + p.s.HeadRefName

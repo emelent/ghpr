@@ -512,6 +512,15 @@ func (m *Model) renderHeader(width int) []string {
 	case "REVIEW_REQUIRED":
 		decStyled = styWarn.Render(decision)
 	}
+	// Who approved and who asked for changes, by their latest review.
+	if approved, changes := gh.Approvers(pr.LatestReviews); len(approved)+len(changes) > 0 {
+		if len(approved) > 0 {
+			decStyled += styOK.Render(" ✓ " + strings.Join(approved, ", "))
+		}
+		if len(changes) > 0 {
+			decStyled += styErr.Render(" ✗ " + strings.Join(changes, ", "))
+		}
+	}
 	mergeInfo := ""
 	if pr.State == "OPEN" && pr.MergeStateStatus != "" {
 		st := styDim.Render(pr.MergeStateStatus)

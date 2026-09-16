@@ -2,6 +2,7 @@ package gh
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"ghpr/internal/diff"
@@ -103,5 +104,20 @@ func TestViewedFilesResponseDecode(t *testing.T) {
 	}
 	if err := graphqlErrors([]byte(`{"data":{}}`)); err != nil {
 		t.Fatalf("clean response: %v", err)
+	}
+}
+
+func TestApprovers(t *testing.T) {
+	mk := func(login, state string) ReviewState {
+		var r ReviewState
+		r.Author.Login, r.State = login, state
+		return r
+	}
+	approved, changes := Approvers([]ReviewState{mk("zoe", "APPROVED"), mk("bob", "COMMENTED"), mk("carol", "CHANGES_REQUESTED"), mk("alice", "APPROVED"), mk("dan", "DISMISSED")})
+	if strings.Join(approved, ",") != "alice,zoe" || strings.Join(changes, ",") != "carol" {
+		t.Fatalf("approved=%v changes=%v", approved, changes)
+	}
+	if a, c := Approvers(nil); a != nil || c != nil {
+		t.Fatal("no reviews")
 	}
 }

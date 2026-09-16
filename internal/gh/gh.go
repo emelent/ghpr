@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,31 @@ type Client struct {
 }
 
 // PR is the detailed view of a pull request.
+// ReviewState is a reviewer's latest review: APPROVED, CHANGES_REQUESTED,
+// COMMENTED, DISMISSED or PENDING.
+type ReviewState struct {
+	Author struct {
+		Login string `json:"login"`
+	} `json:"author"`
+	State string `json:"state"`
+}
+
+// Approvers splits the latest reviews into who approved and who requested
+// changes, each sorted by login.
+func Approvers(reviews []ReviewState) (approved, changes []string) {
+	for _, r := range reviews {
+		switch r.State {
+		case "APPROVED":
+			approved = append(approved, r.Author.Login)
+		case "CHANGES_REQUESTED":
+			changes = append(changes, r.Author.Login)
+		}
+	}
+	sort.Strings(approved)
+	sort.Strings(changes)
+	return approved, changes
+}
+
 type PR struct {
 	ID             string `json:"id"` // GraphQL node id, e.g. PR_kwDOPRY-OM8AAAABCBHOJc
 	Number         int    `json:"number"`
@@ -46,7 +72,8 @@ type PR struct {
 	Author           struct {
 		Login string `json:"login"`
 	} `json:"author"`
-	HeadRepoOwner string `json:"-"`
+	LatestReviews []ReviewState `json:"latestReviews"` // one per reviewer, their most recent review
+	HeadRepoOwner string        `json:"-"`
 }
 
 // PRSummary is a row in a pull request listing.
@@ -61,6 +88,7 @@ type PRSummary struct {
 	Author         struct {
 		Login string `json:"login"`
 	} `json:"author"`
+	LatestReviews []ReviewState `json:"latestReviews"`
 }
 
 // Thread is a review thread anchored to a diff line.
@@ -170,7 +198,7 @@ func (c *Client) ListPRs(state string, limit int) ([]PRSummary, error) {
 		state = "open"
 	}
 	args := append([]string{"pr", "list", "--state", state, "--limit", strconv.Itoa(limit),
-		"--json", "number,title,state,author,headRefName,isDraft,reviewDecision,updatedAt"}, c.repoArgs()...)
+		"--json", "number,title,state,author,headRefName,isDraft,reviewDecision,updatedAt,latestReviews"}, c.repoArgs()...)
 	out, err := run(nil, args...)
 	if err != nil {
 		return nil, err
@@ -185,7 +213,7 @@ func (c *Client) ListPRs(state string, limit int) ([]PRSummary, error) {
 // ViewPR fetches PR metadata.
 func (c *Client) ViewPR(number int) (*PR, error) {
 	args := append([]string{"pr", "view", strconv.Itoa(number),
-		"--json", "id,number,title,body,state,url,baseRefName,headRefName,headRefOid,isDraft,reviewDecision,mergeable,mergeStateStatus,additions,deletions,changedFiles,author,headRepositoryOwner"},
+		"--json", "id,number,title,body,state,url,baseRefName,headRefName,headRefOid,isDraft,reviewDecision,mergeable,mergeStateStatus,additions,deletions,changedFiles,author,headRepositoryOwner,latestReviews"},
 		c.repoArgs()...)
 	out, err := run(nil, args...)
 	if err != nil {
