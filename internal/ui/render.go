@@ -760,7 +760,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{acts: d("notes"), desc: "notes screen: your notes with their lines; j/k move, l jumps there (h comes back), d removes, esc closes"},
 		{acts: d("split"), desc: "toggle inline / side-by-side"},
 		{acts: d("full_file"), desc: "toggle full file view (whole file with changes in place)"},
-		{acts: d("viewed"), desc: "mark / unmark the file as viewed (auto-unmarked if it changes later; synced with GitHub)"},
+		{acts: d("viewed"), desc: "mark / unmark the file as viewed; on a folder in the file tree, every file beneath it (auto-unmarked if a file changes later; synced with GitHub)"},
 		{acts: d("comment"), desc: "comment on the current line (or selection)"},
 		{acts: d("select"), desc: "start / stop selecting lines for a multi-line comment"},
 		{acts: d("reply"), desc: "reply to the thread under the cursor"},

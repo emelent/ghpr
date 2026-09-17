@@ -2156,6 +2156,15 @@ func (m *Model) toggleViewed() tea.Cmd {
 	if m.store == nil {
 		return m.setStatus("Viewed marks are disabled (state store unavailable)", true)
 	}
+	// On a folder in the file tree, m acts on every file beneath it.
+	if m.filesFocused && m.tree {
+		if len(m.treeNodes) == 0 {
+			m.rebuildTree()
+		}
+		if node := m.treeNodes[m.treeIndex()]; node.isDir {
+			return m.toggleViewedDir(node.path)
+		}
+	}
 	f := &m.files[m.fileIdx]
 	key, path := m.prKey(), f.Path()
 	if m.isViewed(path) {
@@ -2249,4 +2258,60 @@ func (m *Model) foldViewedDirs(path string) {
 	if folded != "" {
 		m.treeSel = folded
 	}
+}
+
+// toggleViewedDir marks every shown file under dir as viewed, or unmarks
+// them all when every one already is. Each change is mirrored to GitHub.
+func (m *Model) toggleViewedDir(dir string) tea.Cmd {
+	key, prefix := m.prKey(), dir+"/"
+	var under []int
+	allViewed := true
+	for _, i := range m.shownFiles() {
+		if !strings.HasPrefix(m.files[i].Path(), prefix) {
+			continue
+		}
+		under = append(under, i)
+		if !m.isViewed(m.files[i].Path()) {
+			allViewed = false
+		}
+	}
+	if len(under) == 0 {
+		return nil
+	}
+	var cmds []tea.Cmd
+	if allViewed {
+		for _, i := range under {
+			p := m.files[i].Path()
+			m.store.Delete(key, p)
+			cmds = append(cmds, m.pushViewed(p, false))
+		}
+		if err := m.store.Save(); err != nil {
+			return m.setStatus("Save viewed state: "+err.Error(), true)
+		}
+		delete(m.collapsed, dir) // show what was just unmarked
+		m.rebuildTree()
+		m.treeSel = dir
+		return tea.Batch(append(cmds, m.setStatus(fmt.Sprintf("Unmarked %d file(s) in %s/", len(under), dir), false))...)
+	}
+	sha := ""
+	if m.pr != nil {
+		sha = m.pr.HeadRefOid
+	}
+	n := 0
+	for _, i := range under {
+		p := m.files[i].Path()
+		if m.isViewed(p) {
+			continue
+		}
+		m.store.Set(key, p, state.Viewed{ViewedAt: time.Now(), HeadSHA: sha, Fingerprint: m.fingerprints[i]})
+		cmds = append(cmds, m.pushViewed(p, true))
+		n++
+	}
+	if err := m.store.Save(); err != nil {
+		return m.setStatus("Save viewed state: "+err.Error(), true)
+	}
+	m.treeSel = dir
+	m.foldViewedDirs(m.files[under[0]].Path()) // folds dir and any fully viewed parents
+	m.invalidateLayout()
+	return tea.Batch(append(cmds, m.setStatus(fmt.Sprintf("Viewed %d file(s) in %s/ (%d/%d)", n, dir, m.viewedCount(), len(m.files)), false))...)
 }
