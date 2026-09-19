@@ -186,20 +186,30 @@ type Model struct {
 	fullFailed  map[int]bool // fetch failed; fall back to hunks
 
 	// async / status
-	spinner   spinner.Model
-	busy      string
-	status    string
-	statusErr bool
-	statusSeq int
+	spinner spinner.Model
+	// busy is what the status bar says while work is in flight: the newest
+	// running action, or the load when no action is running.
+	busy       string
+	loadLabel  string     // label of the load in flight, if any
+	running    []inflight // actions in flight, oldest first
+	runSeq     int        // ids for running actions
+	ticking    bool       // a spinner tick loop is alive
+	fetchSeq   int        // ids for PR / thread fetches, to drop stale replies
+	prSeq      int        // newest PR fetch whose answer was taken
+	threadsSeq int        // newest thread fetch whose answer was taken
+	status     string
+	statusErr  bool
+	statusSeq  int
 
 	// text entry
-	ta         textarea.Model
-	inputTitle string
-	inKind     inputKind
-	inComment  gh.LineComment
-	inThread   *gh.Thread
-	inEditID   int64 // review comment being edited (inputEdit)
-	inEvent    gh.ReviewEvent
+	ta           textarea.Model
+	inputTitle   string
+	inKind       inputKind
+	inComment    gh.LineComment
+	inThread     *gh.Thread
+	inEditID     int64  // review comment being edited (inputEdit)
+	inEditThread string // the thread it belongs to, for the pending mark
+	inEvent      gh.ReviewEvent
 
 	fatal error
 }
@@ -318,6 +328,7 @@ type prListMsg struct {
 	err error
 }
 type prMsg struct {
+	seq int
 	pr  *gh.PR
 	err error
 }
@@ -326,6 +337,7 @@ type diffMsg struct {
 	err   error
 }
 type threadsMsg struct {
+	seq     int
 	threads []gh.Thread
 	err     error
 }
@@ -349,9 +361,23 @@ type viewedSyncMsg struct {
 	err  error
 }
 type actionMsg struct {
+	seq     int // which running action landed
 	label   string
 	err     error
 	refresh bool // reload threads (and PR) afterwards
+}
+
+// inflight is one request still running. Several run at once: replying to
+// one thread while another resolves, or resolving two threads together.
+type inflight struct {
+	seq   int
+	label string
+	// key refuses a second action that would do the same thing to the same
+	// target while this one is still running; "" means no guard.
+	key string
+	// thread is the review thread the request is about, so the list can
+	// show which threads are waiting on an answer.
+	thread string
 }
 type clearStatusMsg struct{ seq int }
 
@@ -438,9 +464,11 @@ func (m *Model) cycleListState() tea.Cmd {
 
 func (m *Model) fetchPR() tea.Cmd {
 	c, n := m.client, m.number
+	m.fetchSeq++
+	seq := m.fetchSeq
 	return func() tea.Msg {
 		pr, err := c.ViewPR(n)
-		return prMsg{pr, err}
+		return prMsg{seq, pr, err}
 	}
 }
 
@@ -457,9 +485,11 @@ func (m *Model) fetchDiff() tea.Cmd {
 
 func (m *Model) fetchThreads() tea.Cmd {
 	c, n := m.client, m.number
+	m.fetchSeq++
+	seq := m.fetchSeq
 	return func() tea.Msg {
 		th, err := c.ReviewThreads(n)
-		return threadsMsg{th, err}
+		return threadsMsg{seq, th, err}
 	}
 }
 
@@ -546,8 +576,69 @@ func (m *Model) ensureFull() tea.Cmd {
 }
 
 func (m *Model) setBusy(msg string) tea.Cmd {
-	m.busy = msg
+	m.loadLabel = msg
+	m.refreshBusy()
+	return m.tick()
+}
+
+// tick starts the spinner loop unless one is already running, so several
+// requests at once do not spin it several times as fast.
+func (m *Model) tick() tea.Cmd {
+	if m.ticking {
+		return nil
+	}
+	m.ticking = true
 	return m.spinner.Tick
+}
+
+// refreshBusy rebuilds the status-bar label: the newest running action,
+// with a count of the others, or the load when nothing else is running.
+func (m *Model) refreshBusy() {
+	if len(m.running) == 0 {
+		m.busy = m.loadLabel
+		return
+	}
+	newest := m.running[len(m.running)-1].label
+	if n := len(m.running) - 1; n > 0 {
+		m.busy = fmt.Sprintf("%s + %d more…", newest, n)
+		return
+	}
+	m.busy = newest + "…"
+}
+
+// runningKey reports whether an action with this key is still running.
+func (m *Model) runningKey(key string) bool {
+	for _, r := range m.running {
+		if r.key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// threadWorking reports whether a request about this thread is in flight.
+func (m *Model) threadWorking(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, r := range m.running {
+		if r.thread == id {
+			return true
+		}
+	}
+	return false
+}
+
+// finishAction drops a landed action and puts the bar back to whatever is
+// still running.
+func (m *Model) finishAction(seq int) {
+	for i, r := range m.running {
+		if r.seq == seq {
+			m.running = append(m.running[:i], m.running[i+1:]...)
+			break
+		}
+	}
+	m.refreshBusy()
 }
 
 func (m *Model) setStatus(msg string, isErr bool) tea.Cmd {
@@ -565,8 +656,8 @@ func (m *Model) loadAll() tea.Cmd {
 }
 
 func (m *Model) reloadThreads(withPR bool) tea.Cmd {
+	m.pending++ // several refreshes can be in flight at once
 	cmds := []tea.Cmd{m.setBusy("Refreshing…"), m.fetchThreads()}
-	m.pending = 1
 	if withPR {
 		m.pending++
 		cmds = append(cmds, m.fetchPR())
@@ -575,9 +666,23 @@ func (m *Model) reloadThreads(withPR bool) tea.Cmd {
 }
 
 func (m *Model) action(label string, refresh bool, fn func() error) tea.Cmd {
-	busy := m.setBusy(label + "…")
-	return tea.Batch(busy, func() tea.Msg {
-		return actionMsg{label: label, err: fn(), refresh: refresh}
+	return m.actionOn(label, "", "", refresh, fn)
+}
+
+// actionOn runs fn in the background and reports it as an actionMsg.
+// Requests do not wait for each other: key refuses only a repeat of the
+// same thing on the same target, and thread ties the request to a review
+// thread so the comments list can show it is waiting.
+func (m *Model) actionOn(label, key, thread string, refresh bool, fn func() error) tea.Cmd {
+	if key != "" && m.runningKey(key) {
+		return m.setStatus(label+" is already running", true)
+	}
+	m.runSeq++
+	seq := m.runSeq
+	m.running = append(m.running, inflight{seq: seq, label: label, key: key, thread: thread})
+	m.refreshBusy()
+	return tea.Batch(m.tick(), func() tea.Msg {
+		return actionMsg{seq: seq, label: label, err: fn(), refresh: refresh}
 	})
 }
 
@@ -607,6 +712,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case spinner.TickMsg:
 		if m.busy == "" {
+			m.ticking = false
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -646,7 +752,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case prListMsg:
-		m.busy = ""
+		m.loadLabel = ""
+		m.refreshBusy()
 		if msg.err != nil {
 			if len(m.list.Items()) == 0 && m.screen == screenPicker && m.listState == "open" {
 				m.fatal = msg.err
@@ -662,6 +769,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case prMsg:
 		m.loadDone()
+		if msg.seq < m.prSeq {
+			return m, nil // a newer fetch already answered
+		}
+		m.prSeq = msg.seq
 		if msg.err != nil {
 			if m.pr == nil {
 				m.fatal = msg.err
@@ -714,7 +825,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fileContentMsg:
 		delete(m.fullPending, msg.idx)
 		if len(m.fullPending) == 0 && m.pending == 0 {
-			m.busy = ""
+			m.loadLabel = ""
+			m.refreshBusy()
 		}
 		if msg.idx >= len(m.files) || m.files[msg.idx].Path() != msg.path {
 			return m, nil // stale: diff was reloaded meanwhile
@@ -731,6 +843,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case threadsMsg:
 		m.loadDone()
+		if msg.seq < m.threadsSeq {
+			return m, nil // a newer fetch already answered
+		}
+		m.threadsSeq = msg.seq
 		if msg.err != nil {
 			return m, m.setStatus("threads: "+msg.err.Error(), true)
 		}
@@ -741,13 +857,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case actionMsg:
-		m.busy = ""
+		m.finishAction(msg.seq)
 		if msg.err != nil {
 			return m, m.setStatus(msg.label+" failed: "+msg.err.Error(), true)
 		}
 		cmds := []tea.Cmd{m.setStatus(msg.label+" ✓", false)}
 		if msg.refresh {
-			cmds = append(cmds, m.reloadThreads(true))
+			// While other requests are still out, only the threads are
+			// worth re-reading; the last one to land refreshes the PR too.
+			cmds = append(cmds, m.reloadThreads(len(m.running) == 0))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -771,8 +889,9 @@ func (m *Model) loadDone() {
 		m.pending--
 	}
 	if m.pending == 0 {
-		m.busy = ""
+		m.loadLabel = ""
 	}
+	m.refreshBusy()
 }
 
 // Fatal returns the error that caused the program to exit, if any.
@@ -879,11 +998,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.mergeDelete = !m.mergeDelete
 		case "y", "enter":
 			m.overlay = overlayNone
-			n, del := m.number, m.mergeDelete
+			c, n, del := m.client, m.number, m.mergeDelete
 			if m.pr.State == "OPEN" {
-				return m, m.action("Close PR", true, func() error { return m.client.Close(n, del) })
+				return m, m.actionOn("Close PR", "state", "", true, func() error { return c.Close(n, del) })
 			}
-			return m, m.action("Reopen PR", true, func() error { return m.client.Reopen(n) })
+			return m, m.actionOn("Reopen PR", "state", "", true, func() error { return c.Reopen(n) })
 		case "esc", "n", "q", "X":
 			m.overlay = overlayNone
 		}
@@ -917,7 +1036,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "b", "backspace":
 		return m, m.backToList()
 	case "M":
-		if m.busy == "" && m.pr != nil {
+		if m.pr != nil {
 			if m.pr.State != "OPEN" {
 				return m, m.setStatus("PR is "+strings.ToLower(m.pr.State)+"; only open PRs can be merged", true)
 			}
@@ -925,7 +1044,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.mergeMethod = ""
 		}
 	case "X":
-		if m.busy == "" && m.pr != nil {
+		if m.pr != nil {
 			if m.pr.State == "MERGED" {
 				return m, m.setStatus("Merged PRs cannot be reopened", true)
 			}
@@ -978,11 +1097,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "o":
 		return m, m.openInEditor()
 	case "O":
-		return m, m.action("Open in browser", false, func() error { return m.client.OpenInBrowser(m.number) })
+		c, n := m.client, m.number
+		return m, m.action("Open in browser", false, func() error { return c.OpenInBrowser(n) })
 	case "v":
-		if m.busy == "" {
-			m.overlay = overlayReview
-		}
+		m.overlay = overlayReview
 	case "C":
 		m.openInput(inputPRComment, fmt.Sprintf("Comment on PR #%d", m.number))
 	case "j", "down":
@@ -1087,14 +1205,14 @@ func (m *Model) handlePickKey(key string) (tea.Model, tea.Cmd) {
 		edit := m.overlay == overlayEdit
 		m.closePick()
 		if edit {
-			m.inEditID = c.DatabaseID
+			m.inEditID, m.inEditThread = c.DatabaseID, t.ID
 			m.openInput(inputEdit, fmt.Sprintf("Edit @%s's comment on %s:%d", c.Author, t.Path, max(t.Line, t.OriginalLine)))
 			m.ta.SetValue(strings.ReplaceAll(c.Body, "\r", ""))
 			m.ta.MoveToEnd()
 			return m, nil
 		}
-		id := c.DatabaseID
-		return m, m.action("Delete comment", true, func() error { return m.client.DeleteReviewComment(id) })
+		id, cl, tid := c.DatabaseID, m.client, t.ID
+		return m, m.actionOn("Delete comment", "", tid, true, func() error { return cl.DeleteReviewComment(id) })
 	case "esc", "n", "q", "d", "e":
 		m.closePick()
 	}
@@ -1695,7 +1813,7 @@ func (m *Model) currentRow() *row {
 }
 
 func (m *Model) startComment() tea.Cmd {
-	if m.busy != "" || m.pr == nil {
+	if m.pr == nil {
 		return nil
 	}
 	f := &m.files[m.fileIdx]
@@ -1737,9 +1855,6 @@ func (m *Model) startComment() tea.Cmd {
 }
 
 func (m *Model) startReply() tea.Cmd {
-	if m.busy != "" {
-		return nil
-	}
 	r := m.currentRow()
 	if r == nil || r.kind != rowThread {
 		return m.setStatus("Move the cursor onto a thread to reply", true)
@@ -1771,9 +1886,6 @@ func (m *Model) startEdit() tea.Cmd { return m.startPick(overlayEdit, "edit") }
 // known; otherwise every comment is, and GitHub decides. The newest is
 // preselected.
 func (m *Model) startPick(kind overlayKind, verb string) tea.Cmd {
-	if m.busy != "" {
-		return nil
-	}
 	r := m.currentRow()
 	if r == nil || r.kind != rowThread {
 		return m.setStatus("Move the cursor onto a thread to "+verb+" a comment", true)
@@ -1808,9 +1920,6 @@ func (m *Model) pickTarget() *gh.Comment {
 }
 
 func (m *Model) toggleResolve() tea.Cmd {
-	if m.busy != "" {
-		return nil
-	}
 	r := m.currentRow()
 	if r == nil || r.kind != rowThread {
 		return m.setStatus("Move the cursor onto a thread to resolve it", true)
@@ -1819,11 +1928,14 @@ func (m *Model) toggleResolve() tea.Cmd {
 }
 
 // resolveThread resolves t, or unresolves it when it is already resolved.
+// Other threads can be resolved at the same time; only a second go at this
+// one while its answer is outstanding is refused.
 func (m *Model) resolveThread(t *gh.Thread) tea.Cmd {
+	c, id := m.client, t.ID
 	if t.IsResolved {
-		return m.action("Unresolve thread", true, func() error { return m.client.UnresolveThread(t.ID) })
+		return m.actionOn("Unresolve thread", "resolve:"+id, id, true, func() error { return c.UnresolveThread(id) })
 	}
-	return m.action("Resolve thread", true, func() error { return m.client.ResolveThread(t.ID) })
+	return m.actionOn("Resolve thread", "resolve:"+id, id, true, func() error { return c.ResolveThread(id) })
 }
 
 // openInEditor sends the current file to the Neovim listening on this PR's
@@ -1831,7 +1943,7 @@ func (m *Model) resolveThread(t *gh.Thread) tea.Cmd {
 // Without a socket it does nothing, so the key is harmless when no editor
 // is set up.
 func (m *Model) openInEditor() tea.Cmd {
-	if m.busy != "" || m.pr == nil || len(m.files) == 0 {
+	if m.pr == nil || len(m.files) == 0 {
 		return nil
 	}
 	id, path, line := m.pr.ID, m.files[m.fileIdx].Path(), m.currentNewLine()
@@ -1907,6 +2019,8 @@ func (m *Model) backToList() tea.Cmd {
 	m.pr, m.files, m.threads, m.rows, m.rowStart = nil, nil, nil, nil, nil
 	m.fingerprints = nil
 	m.pending = 0
+	m.running = nil
+	m.loadLabel = ""
 	m.busy = ""
 	m.status = ""
 	m.searchQ = ""
@@ -1964,8 +2078,9 @@ func (m *Model) doMerge(o gh.MergeOptions) tea.Cmd {
 	m.overlay = overlayNone
 	m.mergeMethod = ""
 	n := m.number
-	return m.action(fmt.Sprintf("Merge (%s)", o.Method), true, func() error {
-		return m.client.Merge(n, o)
+	c := m.client
+	return m.actionOn(fmt.Sprintf("Merge (%s)", o.Method), "merge", "", true, func() error {
+		return c.Merge(n, o)
 	})
 }
 
@@ -1998,11 +2113,11 @@ func (m *Model) submitInput() tea.Cmd {
 		if thread == nil || len(thread.Comments) == 0 {
 			return m.setStatus("No thread selected for reply", true)
 		}
-		id := thread.Comments[0].DatabaseID
-		return m.action("Post reply", true, func() error { return c.ReplyToComment(n, id, body) })
+		id, tid := thread.Comments[0].DatabaseID, thread.ID
+		return m.actionOn("Post reply", "", tid, true, func() error { return c.ReplyToComment(n, id, body) })
 	case inputEdit:
-		id := m.inEditID
-		return m.action("Edit comment", true, func() error { return c.EditReviewComment(id, body) })
+		id, tid := m.inEditID, m.inEditThread
+		return m.actionOn("Edit comment", "", tid, true, func() error { return c.EditReviewComment(id, body) })
 	case inputPRComment:
 		return m.action("Post PR comment", false, func() error { return c.Comment(n, body) })
 	case inputMerge:
@@ -2011,7 +2126,7 @@ func (m *Model) submitInput() tea.Cmd {
 	case inputReview:
 		ev := m.inEvent
 		label := map[gh.ReviewEvent]string{gh.Approve: "Approve", gh.RequestChanges: "Request changes", gh.CommentReview: "Submit review"}[ev]
-		return m.action(label, true, func() error { return c.Review(n, ev, body) })
+		return m.actionOn(label, "review", "", true, func() error { return c.Review(n, ev, body) })
 	}
 	return nil
 }

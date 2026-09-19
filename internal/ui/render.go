@@ -107,8 +107,9 @@ func (m *Model) renderHalf(l *diff.Line, st rowState, width, numW int) string {
 }
 
 // renderThread renders a review thread. target, when non-nil, is the comment
-// currently selected in the picker and is flagged with mark.
-func renderThread(t *gh.Thread, selected bool, width int, target *gh.Comment, mark string) []string {
+// currently selected in the picker and is flagged with mark. working says a
+// request about this thread has not been answered yet.
+func renderThread(t *gh.Thread, selected, working bool, width int, target *gh.Comment, mark string) []string {
 	bg := color.Color(colThreadBg)
 	if selected {
 		bg = colThreadCu
@@ -135,6 +136,9 @@ func renderThread(t *gh.Thread, selected bool, width int, target *gh.Comment, ma
 	}
 	if t.IsOutdated {
 		status += base.Foreground(colDim).Render(" · outdated")
+	}
+	if working {
+		status += base.Foreground(colAccent).Render(" · sending")
 	}
 	loc := ""
 	if t.Line > 0 {
@@ -205,7 +209,7 @@ func (m *Model) renderRow(r *row, st rowState, width, numW int) []string {
 		if m.overlay == overlayEdit {
 			mark = "  ✎ edit?"
 		}
-		return renderThread(r.thread, selected, width, m.pickTarget(), mark)
+		return renderThread(r.thread, selected, m.threadWorking(r.thread.ID), width, m.pickTarget(), mark)
 	}
 	return []string{padRight("", width)}
 }
@@ -219,7 +223,7 @@ func (m *Model) rowHeight(i int) int {
 	if h, ok := m.threadH[i]; ok {
 		return h
 	}
-	h := len(renderThread(r.thread, false, m.diffWidth(), nil, ""))
+	h := len(renderThread(r.thread, false, m.threadWorking(r.thread.ID), m.diffWidth(), nil, ""))
 	m.threadH[i] = h
 	return h
 }

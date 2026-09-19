@@ -209,13 +209,13 @@ func (m *Model) handleCommentsKey(key string) (tea.Model, tea.Cmd) {
 	case "l", "right", "enter":
 		return m, m.openCommentThread()
 	case "x":
-		if m.busy != "" || m.cmIdx >= len(m.cmThreads) {
+		if m.cmIdx >= len(m.cmThreads) {
 			return m, nil
 		}
 		return m, m.resolveThread(m.cmThreads[m.cmIdx])
 	case "r":
 		// Reply without leaving the list: the input panel opens under it.
-		if m.busy != "" || m.cmIdx >= len(m.cmThreads) {
+		if m.cmIdx >= len(m.cmThreads) {
 			return m, nil
 		}
 		return m, m.replyTo(m.cmThreads[m.cmIdx])
@@ -440,6 +440,11 @@ func (m *Model) renderCommentItem(t *gh.Thread, selected bool, width int) []stri
 	if t.IsResolved {
 		marker = base.Foreground(colOK).Render("✓ ")
 		status = base.Foreground(colOK).Render("resolved")
+	}
+	if m.threadWorking(t.ID) {
+		// The request is still out; the ticks below it keep their meaning.
+		marker = base.Foreground(colAccent).Render(m.spinner.View() + " ")
+		status += base.Foreground(colAccent).Render(" · sending")
 	}
 	if t.IsOutdated {
 		status += base.Foreground(colDim).Render(" · outdated")

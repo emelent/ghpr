@@ -159,25 +159,27 @@ func TestCommentsResolve(t *testing.T) {
 	if m.screen != screenComments || m.cmThreads[m.cmIdx].ID != "T1" {
 		t.Fatalf("screen=%v idx=%d", m.screen, m.cmIdx)
 	}
-	// x starts the resolve action for the selected thread and blocks while busy.
+	// x starts the resolve for the selected thread; a second x on the same
+	// thread while the answer is still out is refused.
 	if cmd := press("x"); cmd == nil || !strings.HasPrefix(m.busy, "Resolve thread") {
 		t.Fatalf("x should resolve the selected thread: cmd=%v busy=%q", cmd != nil, m.busy)
 	}
-	if cmd := press("x"); cmd != nil {
-		t.Fatal("x should do nothing while busy")
+	press("x")
+	if len(m.running) != 1 || !strings.Contains(m.status, "already running") {
+		t.Fatalf("a repeat should be refused: running=%d status=%q", len(m.running), m.status)
 	}
 	// The refresh after resolving drops the thread from the list and the
 	// selection moves to the next open one.
 	threads := append([]gh.Thread{}, m.threads...)
 	threads[0].IsResolved = true // T1
-	m.busy = ""
-	m.Update(threadsMsg{threads: threads})
+	m.Update(actionMsg{seq: m.running[0].seq, label: "Resolve thread"})
+	m.Update(threadsMsg{seq: 99, threads: threads})
 	if len(m.cmThreads) != 1 || m.cmThreads[0].ID != "T3" || m.cmIdx != 0 {
 		t.Fatalf("resolved thread should leave the list: %d idx=%d", len(m.cmThreads), m.cmIdx)
 	}
 	// With everything resolved the screen says so instead of closing.
 	threads[2].IsResolved = true // T3
-	m.Update(threadsMsg{threads: threads})
+	m.Update(threadsMsg{seq: 100, threads: threads})
 	plain := ansi.Strip(m.View().Content)
 	if len(m.cmThreads) != 0 || !strings.Contains(plain, "Comments (0 open · 3 resolved hidden)") || !strings.Contains(plain, "Every thread is resolved · t shows them") {
 		t.Fatalf("empty state:\n%s", plain)
@@ -194,9 +196,8 @@ func TestCommentsResolve(t *testing.T) {
 		t.Fatalf("x on a resolved thread should unresolve: busy=%q", m.busy)
 	}
 	// Reopening the screen with no threads at all still refuses.
-	m.busy = ""
 	m.closeComments()
-	m.Update(threadsMsg{threads: nil})
+	m.Update(threadsMsg{seq: 101, threads: nil})
 	press("i")
 	if m.screen != screenDiff || !strings.Contains(m.status, "No review threads") {
 		t.Fatalf("expected refusal, status=%q", m.status)
@@ -417,5 +418,71 @@ func TestCommentsReply(t *testing.T) {
 	press("r")
 	if m.overlay == overlayInput || !strings.Contains(m.status, "no comments") {
 		t.Fatalf("expected a refusal, overlay=%v status=%q", m.overlay, m.status)
+	}
+}
+
+func TestConcurrentRequests(t *testing.T) {
+	m := newTestModel(t)
+	press := func(k string) {
+		switch k {
+		case "esc":
+			m.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+		default:
+			m.handleKey(tea.KeyPressMsg{Code: rune(k[0]), Text: k})
+		}
+	}
+	press("i")
+	press("t") // list the resolved thread too: T2, T1, T3
+	if len(m.cmThreads) != 3 {
+		t.Fatalf("threads = %d", len(m.cmThreads))
+	}
+	// Resolve two different threads without waiting for the first answer.
+	m.cmIdx = 1 // T1
+	press("x")
+	m.cmIdx = 2 // T3
+	press("x")
+	if len(m.running) != 2 {
+		t.Fatalf("both resolves should be in flight: %d", len(m.running))
+	}
+	if !m.threadWorking("T1") || !m.threadWorking("T3") || m.threadWorking("T2") {
+		t.Fatal("the list should know which threads are waiting")
+	}
+	plain := ansi.Strip(m.View().Content)
+	if !strings.Contains(plain, "Resolve thread + 1 more") || !strings.Contains(plain, "· sending") {
+		t.Fatalf("the bar should count the requests and the rows should mark them:\n%s", plain)
+	}
+	// Reply to a third thread while those two are still out.
+	m.cmIdx = 0 // T2
+	press("r")
+	if m.overlay != overlayInput || m.inThread.ID != "T2" {
+		t.Fatalf("reply should open while the resolves run: overlay=%v", m.overlay)
+	}
+	m.ta.SetValue("thanks")
+	if cmd := m.submitInput(); cmd == nil || len(m.running) != 3 {
+		t.Fatalf("the reply should join the queue: running=%d", len(m.running))
+	}
+	// Each answer clears its own entry; the bar follows what is left.
+	seqs := []int{m.running[0].seq, m.running[1].seq, m.running[2].seq}
+	m.Update(actionMsg{seq: seqs[1], label: "Resolve thread", refresh: true})
+	if len(m.running) != 2 || m.threadWorking("T3") {
+		t.Fatalf("only the landed request should clear: running=%d", len(m.running))
+	}
+	if !strings.HasPrefix(m.busy, "Post reply") {
+		t.Fatalf("the bar should show what is left: %q", m.busy)
+	}
+	// The refresh that follows the last answer is the one that reloads the
+	// PR as well; earlier ones only re-read the threads.
+	m.Update(actionMsg{seq: seqs[0], label: "Resolve thread", refresh: true})
+	m.Update(actionMsg{seq: seqs[2], label: "Post reply", refresh: true})
+	if len(m.running) != 0 || m.busy != "Refreshing…" {
+		t.Fatalf("running=%d busy=%q", len(m.running), m.busy)
+	}
+	// A slow answer to an old fetch must not undo what a newer one showed.
+	fresh := append([]gh.Thread{}, m.threads...)
+	fresh[0].IsResolved = true
+	m.Update(threadsMsg{seq: 50, threads: fresh})
+	m.Update(threadsMsg{seq: 20, threads: m.threads[:1]})
+	if len(m.threads) != 3 || !m.threads[0].IsResolved {
+		t.Fatalf("a stale reply should be dropped: %d threads", len(m.threads))
 	}
 }

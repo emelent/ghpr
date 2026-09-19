@@ -142,7 +142,7 @@ func (m *Model) rowNoteLine(i int) *diff.Line {
 // toggleNote (a) removes the note on the cursor line, or asks for the text
 // of a new one.
 func (m *Model) toggleNote() tea.Cmd {
-	if m.busy != "" || len(m.rows) == 0 {
+	if len(m.rows) == 0 {
 		return nil
 	}
 	if k := m.rowNoteIndex(m.cursor); k >= 0 {

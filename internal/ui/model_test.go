@@ -868,7 +868,14 @@ func TestCloseReopen(t *testing.T) {
 	if cmd := key("y"); cmd == nil || m.overlay != overlayNone || !strings.Contains(m.busy, "Close PR") {
 		t.Fatalf("y should close with a loader: busy=%q", m.busy)
 	}
-	m.busy = ""
+	// The close has to land before the PR can be reopened: a second go at
+	// the state while the first is still out is refused.
+	key("X")
+	key("y")
+	if len(m.running) != 1 || !strings.Contains(m.status, "already running") {
+		t.Fatalf("a repeat should be refused: running=%d status=%q", len(m.running), m.status)
+	}
+	m.Update(actionMsg{seq: m.running[0].seq, label: "Close PR"})
 	m.pr.State = "CLOSED"
 	key("X")
 	if !strings.Contains(ansi.Strip(m.View().Content), "Reopen PR #7?") {

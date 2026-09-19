@@ -20,7 +20,7 @@ reuses your existing `gh` login and works with any host `gh` is configured for.
 - Close and reopen PRs
 - PR picker with text filter and open / closed / merged / all state filter
 - Post general PR comments
-- Spinner-based loaders for every fetch and action, with success/error feedback
+- Spinner-based loaders for every fetch and action, with success/error feedback; requests run side by side, so you can reply to one thread while another resolves, and each thread waiting on an answer is marked
 - Interactive picker of open PRs when no PR is given
 
 ## Requirements
