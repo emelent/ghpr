@@ -1,7 +1,9 @@
 package editor
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -17,6 +19,21 @@ func TestPaths(t *testing.T) {
 	}
 	if HasServer("PR_does_not_exist") || HasServer("") {
 		t.Fatal("no socket should exist for an unknown or empty id")
+	}
+	// $NVIM_SOCK wins over the id-derived path.
+	sock := filepath.Join(t.TempDir(), "nvim.sock")
+	t.Setenv(EnvSock, sock)
+	if got := SockPath("PR_abc"); got != sock {
+		t.Fatalf("SockPath with %s = %q, want %q", EnvSock, got, sock)
+	}
+	if HasServer("PR_abc") || HasServer("") {
+		t.Fatalf("no socket exists at %s yet", sock)
+	}
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !HasServer("") {
+		t.Fatalf("%s should be used even without a PR id", EnvSock)
 	}
 	if got, want := EditExpr("it's here/a b.txt", 7), "execute('edit +7 ' . fnameescape('./it''s here/a b.txt'))"; got != want {
 		t.Fatalf("EditExpr = %q, want %q", got, want)
@@ -37,6 +54,7 @@ func TestOpen(t *testing.T) {
 
 	// Outside tmux only Neovim is called.
 	t.Setenv("TMUX", "")
+	t.Setenv(EnvSock, "")
 	if err := Open("PR_abc", "my-change.txt", 0); err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +72,19 @@ func TestOpen(t *testing.T) {
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v, want %v", calls, want)
 	}
+	// $NVIM_SOCK replaces the id-derived socket.
+	calls = nil
+	t.Setenv("TMUX", "")
+	t.Setenv(EnvSock, "/run/nvim.sock")
+	if err := Open("PR_abc", "my-change.txt", 0); err != nil {
+		t.Fatal(err)
+	}
+	want = [][]string{{"nvim", "--server", "/run/nvim.sock", "--remote-expr", "execute('edit ' . fnameescape('./my-change.txt'))"}}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+	t.Setenv(EnvSock, "")
+
 	// A failing nvim surfaces its message and stops before tmux.
 	calls, fail = nil, true
 	err := Open("PR_abc", "x", 1)

@@ -65,7 +65,7 @@ Handlers still `switch` on the *default* key names (`case "j", "down"`). `handle
 
 ### Viewed marks, notes, GitHub sync
 
-Viewed marks are keyed by file fingerprint and dropped when the diff changes (`reconcileViewed`). On load, GitHub's "Viewed" ticks are pulled (GraphQL `viewerViewedState`) and merged one-way; `m` pushes with `markFileAsViewed`/`unmarkFileAsViewed` using the PR node ID (`pr.ID`). Notes (`a`/`A`) persist in the same store. The Neovim socket is `/tmp/nvim.<pr node id>.sock`, not the PR number.
+Viewed marks are keyed by file fingerprint and dropped when the diff changes (`reconcileViewed`). On load, GitHub's "Viewed" ticks are pulled (GraphQL `viewerViewedState`) and merged one-way; `m` pushes with `markFileAsViewed`/`unmarkFileAsViewed` using the PR node ID (`pr.ID`). Notes (`a`/`A`) persist in the same store. The Neovim socket is `$NVIM_SOCK` when set, else `/tmp/nvim.<pr node id>.sock` (the node id, not the PR number).
 
 ### Large PRs
 

@@ -154,11 +154,20 @@ id=$(gh pr view 123 --json id -q .id)      # e.g. PR_kwDOPRY-OM8AAAABCBHOJc
 nvim --listen /tmp/nvim.$id.sock
 ```
 
-Pressing `o` while reviewing that PR runs `nvim --server /tmp/nvim.$id.sock
+Set `NVIM_SOCK` to use a fixed socket instead, for a single Neovim that serves
+whichever PR you are reviewing:
+
+```sh
+nvim --listen /tmp/nvim.sock                # in the repository
+NVIM_SOCK=/tmp/nvim.sock ghpr
+```
+
+Pressing `o` while reviewing that PR runs `nvim --server SOCKET
 --remote-expr "execute('edit +LINE ' . fnameescape('./path/to/file'))"` for
 the file under the cursor, where `LINE` is the cursor's line in the new version
 of the file (for a removed line, the nearest line that still exists), and
-switches the tmux session to the `code` window. An expression is used rather
+switches the tmux session to the `code` window. `SOCKET` is `$NVIM_SOCK` when
+that is set, otherwise the id-derived path. An expression is used rather
 than sent keys so your mappings and the current mode cannot interfere. When
 the socket does not exist nothing happens; outside tmux only the file is sent.
 

@@ -12,18 +12,28 @@ import (
 // TmuxWindow is the window in the current tmux session that holds the editor.
 const TmuxWindow = "code"
 
+// EnvSock names the environment variable that overrides the socket path
+// derived from the pull request's node id.
+const EnvSock = "NVIM_SOCK"
+
 // execCommand builds the commands run by Open; tests replace it.
 var execCommand = exec.Command
 
 // SockPath is the Neovim server socket ghpr looks for when reviewing the
 // pull request with GraphQL node id (e.g. PR_kwDOPRY-OM8AAAABCBHOJc): start
-// Neovim with `nvim --listen /tmp/nvim.<id>.sock` in the repository.
-func SockPath(id string) string { return fmt.Sprintf("/tmp/nvim.%s.sock", id) }
+// Neovim with `nvim --listen /tmp/nvim.<id>.sock` in the repository. $NVIM_SOCK
+// overrides that path, so one Neovim can serve whichever PR is being reviewed.
+func SockPath(id string) string {
+	if s := os.Getenv(EnvSock); s != "" {
+		return s
+	}
+	return fmt.Sprintf("/tmp/nvim.%s.sock", id)
+}
 
 // HasServer reports whether a Neovim server socket exists for the PR with
-// node id.
+// node id (or at $NVIM_SOCK).
 func HasServer(id string) bool {
-	if id == "" {
+	if id == "" && os.Getenv(EnvSock) == "" {
 		return false
 	}
 	_, err := os.Stat(SockPath(id))
