@@ -39,6 +39,9 @@ func (m *Model) handleMouse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.screen == screenComments {
+		if m.overlay == overlayInput {
+			return m, nil // the reply panel has the screen
+		}
 		switch e := msg.(type) {
 		case tea.MouseWheelMsg:
 			switch e.Button {

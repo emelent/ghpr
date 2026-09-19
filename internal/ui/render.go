@@ -619,6 +619,10 @@ func (m *Model) renderStatus(width int) string {
 		}
 		left = styBar.Render(" /"+m.searchInput) + styBarKey.Render("▏") + count +
 			styBar.Render("  ") + m.hk(keys.Prompt, "accept") + styBar.Render(" keep  ") + m.hk(keys.Prompt, "cancel") + styBar.Render(" cancel")
+	case m.screen == screenComments && m.cmSearching:
+		left = styBar.Render(" /"+m.cmSearchInput) + styBarKey.Render("▏") +
+			styBarDim.Render(fmt.Sprintf("  %d thread(s)  ", len(m.cmThreads))) +
+			m.hk(keys.Prompt, "accept") + styBar.Render(" keep  ") + m.hk(keys.Prompt, "cancel") + styBar.Render(" cancel")
 	case m.selecting && m.overlay == overlayNone:
 		left = styBar.Render(fmt.Sprintf(" %d line(s) selected  ", m.selectedLineCount())) +
 			m.hk2(keys.Diff, "down", "up") + styBar.Render(" extend  ") +
@@ -634,6 +638,9 @@ func (m *Model) renderStatus(width int) string {
 		nt := m.notes[m.rowNoteIndex(m.cursor)]
 		left = lipgloss.NewStyle().Background(colBarBg).Foreground(colWarn).Bold(true).Render(" ⚑ "+nt.body) +
 			styBar.Render("  ") + m.hk(keys.Diff, "note") + styBar.Render(" remove note  ") + m.hk(keys.Diff, "notes") + styBar.Render(fmt.Sprintf(" all notes (%d)", len(m.notes)))
+	case m.screen == screenComments && m.cmQuery != "" && m.overlay == overlayNone:
+		left = styBar.Render(" /"+m.cmQuery) + styBarDim.Render(fmt.Sprintf("  %d of %d thread(s)  ", len(m.cmThreads), m.cmCandidates())) +
+			m.hk(keys.Comments, "close") + styBar.Render(" clear")
 	case m.searchQ != "" && m.overlay == overlayNone:
 		pos, total := m.matchPos()
 		where := fmt.Sprintf("%d match(es)", total)
@@ -652,8 +659,14 @@ func (m *Model) renderStatus(width int) string {
 	case m.overlay == overlayInput:
 		right = m.hk(keys.Input, "submit") + styBarDim.Render(" submit  ") + m.hk(keys.Input, "cancel") + styBarDim.Render(" cancel ")
 	case m.screen == screenComments:
+		resolved := " resolved  "
+		if m.cmShowResolved {
+			resolved = " hide resolved  "
+		}
 		right = m.hk2(keys.Comments, "down", "up") + styBarDim.Render(" move  ") + m.hk(keys.Comments, "open") + styBarDim.Render(" open in diff  ") +
-			m.hk(keys.Comments, "close") + styBarDim.Render(" close ")
+			m.hk(keys.Comments, "reply") + styBarDim.Render(" reply  ") + m.hk(keys.Comments, "resolve") + styBarDim.Render(" resolve  ") +
+			m.hk(keys.Comments, "search") + styBarDim.Render(" search  ") +
+			m.hk(keys.Comments, "show_resolved") + styBarDim.Render(resolved) + m.hk(keys.Comments, "close") + styBarDim.Render(" close ")
 	case m.screen == screenNotes:
 		right = m.hk2(keys.Notes, "down", "up") + styBarDim.Render(" move  ") + m.hk(keys.Notes, "open") + styBarDim.Render(" go to line  ") +
 			m.hk(keys.Notes, "delete") + styBarDim.Render(" remove  ") + m.hk(keys.Notes, "close") + styBarDim.Render(" close ")
@@ -755,7 +768,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{acts: d("toggle_files"), desc: "toggle file list"},
 		{acts: d("tree_flat"), desc: "file list: tree / flat"},
 		{acts: d("threads_only"), desc: "show only files with review threads (file list, next / previous file, file picker and search follow it)"},
-		{acts: d("comments"), desc: "comments screen: every thread with its code line and first comment; j/k move, l opens it in the diff (h there comes back), esc closes"},
+		{acts: d("comments"), desc: "comments screen: open threads with their code line and first comment; j/k move, l opens it in the diff (h there comes back), r replies to it in a panel under the list, x resolves / unresolves, t shows resolved threads too, / filters by path, author or comment text (esc clears it), esc closes"},
 		{acts: d("note"), desc: "add a note on the current line to come back to (press again to remove it); noted lines get amber line numbers; notes are kept per PR"},
 		{acts: d("notes"), desc: "notes screen: your notes with their lines; j/k move, l jumps there (h comes back), d removes, esc closes"},
 		{acts: d("split"), desc: "toggle inline / side-by-side"},

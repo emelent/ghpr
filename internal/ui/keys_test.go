@@ -25,7 +25,7 @@ help = ["f1"]
 down = ["ctrl+d"]
 
 [comments]
-close = ["x"]
+close = ["b"]
 `); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ close = ["x"]
 	if m.overlay != overlayNone {
 		t.Fatal("ctrl+p should close the picker")
 	}
-	// Comments screen: x closes, esc no longer does.
+	// Comments screen: b closes, esc no longer does.
 	press("i")
 	if m.screen != screenComments {
 		t.Fatal("i opens comments")
@@ -112,9 +112,9 @@ close = ["x"]
 	if m.screen != screenComments {
 		t.Fatal("esc is unbound in comments")
 	}
-	press("x")
+	press("b")
 	if m.screen != screenDiff {
-		t.Fatal("x should close comments")
+		t.Fatal("b should close comments")
 	}
 	// Status hints use the map too (a wider window: the rebound names are
 	// longer and the bar hides hints that do not fit).

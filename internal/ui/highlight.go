@@ -152,6 +152,31 @@ func (h *Highlighter) HighlightFile(f *diff.File) map[*diff.Line][]Span {
 
 // renderSpans renders spans onto a background, skipping the first skip
 // columns (horizontal scroll) and truncating/padding to width.
+// highlightMatches renders text in base with every case-insensitive
+// occurrence of q drawn in the search-match colours. An empty q renders
+// the text as it is.
+func highlightMatches(text, q string, base lipgloss.Style) string {
+	ranges := findMatches(text, q)
+	if len(ranges) == 0 {
+		return base.Render(text)
+	}
+	hit := base.Background(colMatchBg).Foreground(colMatchFg)
+	r := []rune(text)
+	var sb strings.Builder
+	pos := 0
+	for _, rg := range ranges {
+		if rg[0] > pos {
+			sb.WriteString(base.Render(string(r[pos:rg[0]])))
+		}
+		sb.WriteString(hit.Render(string(r[rg[0]:rg[1]])))
+		pos = rg[1]
+	}
+	if pos < len(r) {
+		sb.WriteString(base.Render(string(r[pos:])))
+	}
+	return sb.String()
+}
+
 func renderSpans(spans []Span, bg color.Color, width, skip int) string {
 	if width <= 0 {
 		return ""

@@ -91,10 +91,15 @@ type Model struct {
 	threadsOnly bool // file list, navigation and search limited to files with review threads
 
 	// comments screen
-	cmThreads []*gh.Thread // threads in file/line order
-	cmIdx     int          // selected thread
-	cmScroll  int          // first visible thread
-	backTo    screen       // list screen (comments/notes) the diff was entered from; h returns there
+	cmThreads      []*gh.Thread // threads in file/line order (resolved ones only when cmShowResolved)
+	cmShowResolved bool         // comments screen: list resolved threads too
+	cmQuery        string       // active thread filter (path, author or comment text)
+	cmSearchInput  string       // what is typed in the / prompt
+	cmSearchPrev   string       // query to restore when the prompt is cancelled
+	cmSearching    bool         // the / prompt is open
+	cmIdx          int          // selected thread
+	cmScroll       int          // first visible thread
+	backTo         screen       // list screen (comments/notes) the diff was entered from; h returns there
 
 	// notes on lines (session only)
 	notes     []lineNote
@@ -798,7 +803,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	if m.screen == screenComments {
+	if m.screen == screenComments && m.overlay != overlayInput {
+		if m.cmSearching {
+			return m.handleCommentsSearchKey(m.keys.Translate(keys.Prompt, key), msg)
+		}
 		return m.handleCommentsKey(m.keys.Translate(keys.Comments, key))
 	}
 	if m.screen == screenNotes {
@@ -1663,7 +1671,11 @@ func (m *Model) openInput(kind inputKind, title string) {
 	m.inKind = kind
 	m.inputTitle = title
 	m.ta.Reset()
-	m.ta.SetWidth(max(10, m.diffWidth()-2))
+	w := m.diffWidth()
+	if m.screen == screenComments {
+		w = m.width // the list has no file panel beside it
+	}
+	m.ta.SetWidth(max(10, w-2))
 	m.ta.Focus()
 	m.overlay = overlayInput
 }
@@ -1732,12 +1744,17 @@ func (m *Model) startReply() tea.Cmd {
 	if r == nil || r.kind != rowThread {
 		return m.setStatus("Move the cursor onto a thread to reply", true)
 	}
-	if len(r.thread.Comments) == 0 {
+	return m.replyTo(r.thread)
+}
+
+// replyTo opens the input panel for a reply to t.
+func (m *Model) replyTo(t *gh.Thread) tea.Cmd {
+	if len(t.Comments) == 0 {
 		return m.setStatus("Thread has no comments to reply to", true)
 	}
-	m.inThread = r.thread
-	first := r.thread.Comments[0]
-	m.openInput(inputReply, fmt.Sprintf("Reply to @%s on %s:%d", first.Author, r.thread.Path, max(r.thread.Line, r.thread.OriginalLine)))
+	m.inThread = t
+	first := t.Comments[0]
+	m.openInput(inputReply, fmt.Sprintf("Reply to @%s on %s:%d", first.Author, t.Path, max(t.Line, t.OriginalLine)))
 	return nil
 }
 
@@ -1798,7 +1815,11 @@ func (m *Model) toggleResolve() tea.Cmd {
 	if r == nil || r.kind != rowThread {
 		return m.setStatus("Move the cursor onto a thread to resolve it", true)
 	}
-	t := r.thread
+	return m.resolveThread(r.thread)
+}
+
+// resolveThread resolves t, or unresolves it when it is already resolved.
+func (m *Model) resolveThread(t *gh.Thread) tea.Cmd {
 	if t.IsResolved {
 		return m.action("Unresolve thread", true, func() error { return m.client.UnresolveThread(t.ID) })
 	}
@@ -2018,7 +2039,14 @@ func (m *Model) view() string {
 	header := m.renderHeader(m.width)
 	mainH := m.mainHeight()
 	if m.screen == screenComments {
-		return strings.Join(header, "\n") + "\n" + strings.Join(m.renderComments(m.width, mainH), "\n") + "\n" + m.renderStatus(m.width)
+		listH := mainH
+		var input []string
+		if m.overlay == overlayInput {
+			listH -= inputPanelH
+			input = m.renderInput(m.width, inputPanelH)
+		}
+		body := append(m.renderComments(m.width, listH), input...)
+		return strings.Join(header, "\n") + "\n" + strings.Join(body, "\n") + "\n" + m.renderStatus(m.width)
 	}
 	if m.screen == screenNotes {
 		return strings.Join(header, "\n") + "\n" + strings.Join(m.renderNotes(m.width, mainH), "\n") + "\n" + m.renderStatus(m.width)

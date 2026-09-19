@@ -11,6 +11,7 @@ import (
 
 	"ghpr/internal/diff"
 	"ghpr/internal/gh"
+	"ghpr/internal/keys"
 )
 
 // ---------- comments screen (i) ----------
@@ -30,10 +31,10 @@ func (m *Model) openComments() tea.Cmd {
 	if m.pr == nil {
 		return nil
 	}
-	m.buildCommentList()
-	if len(m.cmThreads) == 0 {
+	if len(m.threads) == 0 {
 		return m.setStatus("No review threads on this PR", true)
 	}
+	m.buildCommentList()
 	m.screen = screenComments
 	m.cmScroll = 0
 	// Preselect the thread under the cursor, if any.
@@ -51,14 +52,27 @@ func (m *Model) openComments() tea.Cmd {
 	return nil
 }
 
-// buildCommentList orders the threads by file (in diff order) and line.
+// buildCommentList orders the threads by file (in diff order) and line,
+// leaving out resolved threads unless cmShowResolved is set and threads
+// that do not match the active search. The selection follows its thread
+// when the list changes and clamps when it is gone.
 func (m *Model) buildCommentList() {
 	fileOrder := map[string]int{}
 	for i := range m.files {
 		fileOrder[m.files[i].Path()] = i
 	}
+	selID := ""
+	if m.cmIdx < len(m.cmThreads) {
+		selID = m.cmThreads[m.cmIdx].ID
+	}
 	m.cmThreads = m.cmThreads[:0]
 	for i := range m.threads {
+		if m.threads[i].IsResolved && !m.cmShowResolved {
+			continue
+		}
+		if !threadMatches(&m.threads[i], m.cmQuery) {
+			continue
+		}
 		m.cmThreads = append(m.cmThreads, &m.threads[i])
 	}
 	pos := func(t *gh.Thread) (int, int) {
@@ -76,9 +90,90 @@ func (m *Model) buildCommentList() {
 		}
 		return la < lb
 	})
+	for i, t := range m.cmThreads {
+		if t.ID == selID {
+			m.cmIdx = i
+			break
+		}
+	}
 	if m.cmIdx >= len(m.cmThreads) {
 		m.cmIdx = max(0, len(m.cmThreads)-1)
 	}
+}
+
+// threadMatches reports whether a thread is a hit for the comments-screen
+// search: the query occurs in its file path, in the name of anyone who
+// wrote in it, or in the text of any of its comments. An empty query
+// matches everything.
+func threadMatches(t *gh.Thread, q string) bool {
+	if q == "" {
+		return true
+	}
+	if len(findMatches(t.Path, q)) > 0 {
+		return true
+	}
+	for i := range t.Comments {
+		if len(findMatches(t.Comments[i].Author, q)) > 0 || len(findMatches(t.Comments[i].Body, q)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// cmCandidates is how many threads the resolved filter lets through, which
+// is what the search then narrows.
+func (m *Model) cmCandidates() int {
+	n := 0
+	for i := range m.threads {
+		if !m.threads[i].IsResolved || m.cmShowResolved {
+			n++
+		}
+	}
+	return n
+}
+
+// firstLine is the first line of a comment body, trimmed.
+func firstLine(body string) string {
+	b := strings.TrimSpace(strings.ReplaceAll(body, "\r", ""))
+	b, _, _ = strings.Cut(b, "\n")
+	return b
+}
+
+// cmPreview picks the comment of a thread to show in the list and the line
+// of its body to show with it. With a search active that is the first
+// comment and the first line of it that the query hits, so the list shows
+// what was matched; otherwise the first comment and its opening line.
+func cmPreview(t *gh.Thread, q string) (c *gh.Comment, line string) {
+	if len(t.Comments) == 0 {
+		return nil, ""
+	}
+	if q != "" {
+		for i := range t.Comments {
+			for _, l := range strings.Split(strings.ReplaceAll(t.Comments[i].Body, "\r", ""), "\n") {
+				if len(findMatches(l, q)) > 0 {
+					return &t.Comments[i], strings.TrimSpace(l)
+				}
+			}
+			if len(findMatches(t.Comments[i].Author, q)) > 0 {
+				return &t.Comments[i], firstLine(t.Comments[i].Body)
+			}
+		}
+	}
+	return &t.Comments[0], firstLine(t.Comments[0].Body)
+}
+
+// resolvedHidden is how many resolved threads the list leaves out.
+func (m *Model) resolvedHidden() int {
+	if m.cmShowResolved {
+		return 0
+	}
+	n := 0
+	for i := range m.threads {
+		if m.threads[i].IsResolved {
+			n++
+		}
+	}
+	return n
 }
 
 // closeComments returns to the diff.
@@ -91,6 +186,13 @@ func (m *Model) closeComments() {
 func (m *Model) handleCommentsKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "esc", "i", "q":
+		// An active filter goes first, so the list is whole again before
+		// the key closes the screen.
+		if m.cmQuery != "" {
+			m.cmQuery = ""
+			m.buildCommentList()
+			return m, nil
+		}
 		m.closeComments()
 	case "j", "down":
 		if m.cmIdx+1 < len(m.cmThreads) {
@@ -106,6 +208,24 @@ func (m *Model) handleCommentsKey(key string) (tea.Model, tea.Cmd) {
 		m.cmIdx = max(0, len(m.cmThreads)-1)
 	case "l", "right", "enter":
 		return m, m.openCommentThread()
+	case "x":
+		if m.busy != "" || m.cmIdx >= len(m.cmThreads) {
+			return m, nil
+		}
+		return m, m.resolveThread(m.cmThreads[m.cmIdx])
+	case "r":
+		// Reply without leaving the list: the input panel opens under it.
+		if m.busy != "" || m.cmIdx >= len(m.cmThreads) {
+			return m, nil
+		}
+		return m, m.replyTo(m.cmThreads[m.cmIdx])
+	case "t":
+		m.cmShowResolved = !m.cmShowResolved
+		m.buildCommentList()
+	case "/":
+		m.cmSearching = true
+		m.cmSearchPrev = m.cmQuery
+		m.cmSearchInput = m.cmQuery
 	case "R":
 		return m, m.loadAll()
 	case "?":
@@ -115,6 +235,49 @@ func (m *Model) handleCommentsKey(key string) (tea.Model, tea.Cmd) {
 		m.savePosition()
 		return m, tea.Quit
 	}
+	return m, nil
+}
+
+// handleCommentsSearchKey edits the / prompt. Typing filters the list as
+// you go, enter keeps the filter, esc puts back whatever was in force
+// before the prompt was opened.
+func (m *Model) handleCommentsSearchKey(key string, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc":
+		m.cmSearching = false
+		m.cmQuery = m.cmSearchPrev
+		m.buildCommentList()
+		return m, nil
+	case "enter":
+		m.cmSearching = false
+		m.cmQuery = m.cmSearchInput
+		m.buildCommentList()
+		return m, nil
+	case "down":
+		if m.cmIdx+1 < len(m.cmThreads) {
+			m.cmIdx++
+		}
+		return m, nil
+	case "up":
+		if m.cmIdx > 0 {
+			m.cmIdx--
+		}
+		return m, nil
+	case "backspace":
+		if r := []rune(m.cmSearchInput); len(r) > 0 {
+			m.cmSearchInput = string(r[:len(r)-1])
+		}
+	case "ctrl+u":
+		m.cmSearchInput = ""
+	default:
+		if msg.Text == "" {
+			return m, nil // control key: ignore
+		}
+		m.cmSearchInput += msg.Text
+	}
+	m.cmQuery = m.cmSearchInput
+	m.buildCommentList()
+	m.cmIdx, m.cmScroll = 0, 0 // a new query starts from the first hit
 	return m, nil
 }
 
@@ -216,11 +379,31 @@ func (m *Model) renderComments(width, height int) []string {
 			open++
 		}
 	}
-	title := styTitle.Render(fmt.Sprintf(" Comments (%d threads · %d open)", len(m.cmThreads), open))
-	lines := []string{padRight(truncate(title, width), width), styBorder.Render(strings.Repeat("─", width))}
+	hidden := m.resolvedHidden()
+	title := fmt.Sprintf(" Comments (%d threads · %d open)", len(m.cmThreads), open)
+	switch {
+	case m.cmQuery != "":
+		title = fmt.Sprintf(" Comments (%d of %d match “%s”)", len(m.cmThreads), m.cmCandidates(), m.cmQuery)
+		if hidden > 0 {
+			title += fmt.Sprintf(" · %d resolved hidden", hidden)
+		}
+	case hidden > 0:
+		title = fmt.Sprintf(" Comments (%d open · %d resolved hidden)", open, hidden)
+	}
+	lines := []string{padRight(truncate(styTitle.Render(title), width), width), styBorder.Render(strings.Repeat("─", width))}
+	if m.cmSearching {
+		lines = append(lines, padRight(truncate(styAccent.Render(" / ")+m.cmSearchInput+styAccent.Render("▏"), width), width))
+	}
 	avail := height - len(lines)
 	if avail < 1 {
 		return lines[:min(len(lines), height)]
+	}
+	if len(m.cmThreads) == 0 {
+		msg := "  Every thread is resolved · " + m.keys.Label(keys.Comments, "show_resolved") + " shows them"
+		if m.cmQuery != "" {
+			msg = "  No thread matches “" + m.cmQuery + "” · " + m.keys.Label(keys.Comments, "close") + " clears the search"
+		}
+		lines = append(lines, padRight(truncate(styDim.Render(msg), width), width))
 	}
 	// Keep the selected thread fully visible (items vary in height).
 	if m.cmIdx < m.cmScroll {
@@ -270,12 +453,13 @@ func (m *Model) renderCommentItem(t *gh.Thread, selected bool, width int) []stri
 	case t.OriginalLine > 0:
 		loc += fmt.Sprintf(":%d (orig)", t.OriginalLine)
 	}
+	prev, body := cmPreview(t, m.cmQuery)
 	meta := ""
-	if len(t.Comments) > 0 {
-		c := t.Comments[0]
-		meta = fmt.Sprintf("  @%s · %s · %d comment(s) · ", c.Author, ago(c.CreatedAt), len(t.Comments))
+	if prev != nil {
+		meta = fmt.Sprintf("  @%s · %s · %d comment(s) · ", prev.Author, ago(prev.CreatedAt), len(t.Comments))
 	}
-	l1 := " " + marker + base.Foreground(colText).Bold(true).Render(loc) + base.Foreground(colDim).Render(meta) + status
+	l1 := " " + marker + highlightMatches(loc, m.cmQuery, base.Foreground(colText).Bold(true)) +
+		highlightMatches(meta, m.cmQuery, base.Foreground(colDim)) + status
 
 	out := []string{padRightBg(truncate(l1, width), width, bg)}
 	snippet, hidden := m.threadSnippet(t)
@@ -299,18 +483,16 @@ func (m *Model) renderCommentItem(t *gh.Thread, selected bool, width int) []stri
 		out = append(out, padRightBg(truncateTail(more, width), width, bg))
 	}
 
-	body := ""
-	if len(t.Comments) > 0 {
-		body = strings.TrimSpace(strings.ReplaceAll(t.Comments[0].Body, "\r", ""))
-		body, _, _ = strings.Cut(body, "\n")
-	}
-	l3 := base.Render("     ") + base.Foreground(colText).Render(body)
+	l3 := base.Render("     ") + highlightMatches(body, m.cmQuery, base.Foreground(colText))
 	return append(out, padRightBg(truncateTail(l3, width), width, bg), padRightBg("", width, bg))
 }
 
 // commentAtY maps a screen row to a comments-screen item index, or -1.
 func (m *Model) commentAtY(y int) int {
 	top := headerH + paneHeaderH
+	if m.cmSearching {
+		top++ // the / prompt sits above the list
+	}
 	if y < top {
 		return -1
 	}
