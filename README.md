@@ -6,6 +6,10 @@ lipgloss v2, imported from their `charm.land/...` module paths) that uses the
 [GitHub CLI](https://cli.github.com) (`gh`) for all data and actions, so it
 reuses your existing `gh` login and works with any host `gh` is configured for.
 
+> **Note:** this project is entirely AI-generated. Every line of code, and this
+> README, was written by [Claude Code](https://claude.com/claude-code) under
+> human direction. Review it accordingly before relying on it.
+
 ## Features
 
 - Syntax-highlighted diffs (via chroma), inline or side-by-side with a single-key toggle
