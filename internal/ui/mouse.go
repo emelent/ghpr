@@ -221,11 +221,19 @@ func (m *Model) mouseClick(e tea.MouseClickMsg) tea.Cmd {
 }
 
 // mouseDrag extends a selection from the row where the button went down to
-// the row under the pointer.
+// the row under the pointer. Dragging past the top or bottom of the pane
+// steps one row further each time the pointer moves, so ensureCursorVisible
+// scrolls and the selection can outgrow the screen.
 func (m *Model) mouseDrag(e tea.MouseMotionMsg) {
 	i := m.rowAtY(e.Y, true)
 	if i < 0 {
 		return
+	}
+	switch top, bottom := headerH+paneHeaderH, headerH+paneHeaderH+m.viewportH(); {
+	case e.Y < top:
+		i = max(0, i-1)
+	case e.Y >= bottom:
+		i = min(len(m.rows)-1, i+1)
 	}
 	if i != m.dragAnchor && !m.selecting {
 		m.selecting = true

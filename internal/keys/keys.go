@@ -82,6 +82,7 @@ var Defaults = []Binding{
 	{Diff, "viewed", []string{"m"}, "mark / unmark the file as viewed"},
 	{Diff, "select", []string{"V"}, "start / stop selecting lines"},
 	{Diff, "cancel", []string{"esc"}, "cancel the selection, otherwise clear the search"},
+	{Diff, "copy", []string{"y"}, "copy the selection to the clipboard"},
 	{Diff, "comment", []string{"c"}, "comment on the line or selection"},
 	{Diff, "reply", []string{"r"}, "reply to the thread under the cursor"},
 	{Diff, "resolve", []string{"x"}, "resolve / unresolve the thread under the cursor"},

@@ -1184,6 +1184,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.startDelete()
 	case "e":
 		return m, m.startEdit()
+	case "y":
+		return m, m.yank()
 	}
 	return m, nil
 }

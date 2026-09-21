@@ -631,6 +631,7 @@ func (m *Model) renderStatus(width int) string {
 		left = styBar.Render(fmt.Sprintf(" %d line(s) selected  ", m.selectedLineCount())) +
 			m.hk2(keys.Diff, "down", "up") + styBar.Render(" extend  ") +
 			m.hk(keys.Diff, "comment") + styBar.Render(" comment  ") +
+			m.hk(keys.Diff, "copy") + styBar.Render(" copy  ") +
 			m.hk(keys.Diff, "cancel") + styBar.Render(" cancel")
 	case m.status != "":
 		if m.statusErr {
@@ -779,7 +780,8 @@ func (m *Model) renderHelp(width, height int) []string {
 		{acts: d("full_file"), desc: "toggle full file view (whole file with changes in place)"},
 		{acts: d("viewed"), desc: "mark / unmark the file as viewed; on a folder in the file tree, every file beneath it (auto-unmarked if a file changes later; synced with GitHub)"},
 		{acts: d("comment"), desc: "comment on the current line (or selection)"},
-		{acts: d("select"), desc: "start / stop selecting lines for a multi-line comment"},
+		{acts: d("select"), desc: "start / stop selecting lines for a multi-line comment; the mouse selects too (click and drag, or shift-click to extend)"},
+		{acts: d("copy"), desc: "copy the selected lines to the clipboard (the line under the cursor when nothing is selected); diff markers are stripped, threads copy as @author: body"},
 		{acts: d("reply"), desc: "reply to the thread under the cursor"},
 		{acts: d("resolve"), desc: "resolve / unresolve the thread under the cursor"},
 		{acts: d("delete_comment"), desc: "delete one of your comments in the thread under the cursor (y to confirm)"},

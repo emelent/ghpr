@@ -122,7 +122,9 @@ Press `?` inside the app for this list.
 | `a` | Add a note on the line under the cursor, for something to come back to. You are asked for the text (what you wanted to do there); `enter` saves, `esc` cancels. Lines with a note show amber line numbers and the note in the status bar; `a` on such a line removes the note. Notes are saved per pull request alongside the viewed marks, so they are there again when you reopen the PR |
 | `A` | Notes screen: every note with its file, line and code. `j`/`k` move, `l` or `enter` jumps to the line in the diff, `h` there comes back to the list, `d` removes a note, `esc` closes |
 
-The mouse works too: click a line to move the cursor there, drag (or `shift`+click) to select a range for a multi-line comment, and use the wheel to scroll. In the file list, click a file to open it or a folder to fold / unfold it, and the wheel moves through the list. In the pull request list, click a PR to select it and click it again to open it.
+The mouse works too: click a line to move the cursor there, drag (or `shift`+click) to select a range, and use the wheel to scroll. Dragging past the top or bottom of the pane scrolls, so a selection can be longer than the screen. A selection is both what `c` comments on and what `y` copies. In the file list, click a file to open it or a folder to fold / unfold it, and the wheel moves through the list. In the pull request list, click a PR to select it and click it again to open it.
+
+ghpr keeps mouse reporting on, which takes click-drag away from your terminal's own selection; hold `shift` while dragging to get it back (most terminals), or use `y`.
 
 When the file panel is focused in tree mode: `j`/`k` move through directories and files, `enter`, `space` or `l` on a file opens it and returns focus to the diff; on a directory `enter`/`space` toggle it, `l` expands and `h` collapses (`h` on a file jumps to its directory), `H`/`L` collapse / expand everything. From the diff, `h` brings you back to the tree. Collapsed directories show file, viewed and change counts.
 | `s` | Toggle inline / side-by-side diff |
@@ -135,6 +137,7 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 | --- | --- |
 | `c` | Comment on the line under the cursor, or on the selected range |
 | `V` | Start selecting lines; move with `j`/`k`, then `c` to comment on the range, `esc` to cancel |
+| `y` | Copy the selection to the clipboard, or the line under the cursor when nothing is selected. Diff markers are dropped so the text pastes as code; a thread copies as `@author: body`. Goes to the clipboard both through the platform tool (`pbcopy`, `xclip`, `wl-copy`) and through OSC 52, so it also works over SSH — in tmux that needs `set -g set-clipboard on` |
 | `r` | Reply to the thread under the cursor |
 | `x` | Resolve / unresolve the thread under the cursor |
 | `d` | Delete one of your comments in the thread under the cursor. The newest is preselected; `j`/`k` pick another, `y` confirms |
