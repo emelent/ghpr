@@ -697,7 +697,8 @@ func (m *Model) renderStatus(width int) string {
 		right = lipgloss.NewStyle().Background(colBarBg).Foreground(colWarn).Bold(true).Render("key: "+m.lastKey) + styBar.Render("  ") + right
 	}
 	pos := ""
-	if m.screen == screenDiff && m.showingFull() {
+	// New files are shown whole already, so they count as full-file views.
+	if m.screen == screenDiff && len(m.files) > 0 && (m.showingFull() || m.files[m.fileIdx].Status == diff.Added) {
 		if cur, total, ok := m.filePosition(); ok {
 			pos = styBarKey.Render(fmt.Sprintf(" %d/%d %d%% ", cur, total, cur*100/total))
 		}

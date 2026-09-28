@@ -1496,3 +1496,16 @@ func TestDebugKeys(t *testing.T) {
 		t.Fatal("debug key display must not hide real status messages")
 	}
 }
+
+func TestFilePositionNewFile(t *testing.T) {
+	m := newTestModel(t)
+	added := "diff --git a/new.go b/new.go\nnew file mode 100644\n--- /dev/null\n+++ b/new.go\n@@ -0,0 +1,4 @@\n+package main\n+\n+func f() {}\n+// end\n"
+	m.Update(diffMsg{files: diff.Parse(added)})
+	if m.files[0].Status != diff.Added {
+		t.Fatalf("fixture should parse as an added file, got %v", m.files[0].Status)
+	}
+	m.cursor = 2 // line 2 of 4, after the hunk header
+	if plain := ansi.Strip(m.View().Content); !strings.Contains(plain, "2/4 50%") {
+		t.Fatalf("new file should show its position:\n%s", plain)
+	}
+}
