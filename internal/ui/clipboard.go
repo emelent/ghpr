@@ -9,8 +9,14 @@ import (
 )
 
 // clipboardWrite hands text to the platform clipboard tool (pbcopy, xclip,
-// wl-copy…). It is a variable so tests can stub it.
-var clipboardWrite = clipboard.WriteAll
+// wl-copy…). It is a variable so tests can stub it; the Unsupported check
+// lives inside it so a stub still runs on machines with no tool (CI).
+var clipboardWrite = func(s string) error {
+	if clipboard.Unsupported {
+		return nil
+	}
+	return clipboard.WriteAll(s)
+}
 
 // copyToClipboard puts s on the clipboard two ways: through the platform
 // tool, and through OSC 52, which is what reaches the local machine when
@@ -19,9 +25,7 @@ var clipboardWrite = clipboard.WriteAll
 // tool's error is dropped: a missing xclip should not fail the copy that
 // OSC 52 may still have made.
 func copyToClipboard(s string) tea.Cmd {
-	if !clipboard.Unsupported {
-		_ = clipboardWrite(s)
-	}
+	_ = clipboardWrite(s)
 	return tea.SetClipboard(s)
 }
 
