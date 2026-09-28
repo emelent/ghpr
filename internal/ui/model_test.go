@@ -414,6 +414,10 @@ func TestFullFileView(t *testing.T) {
 	if o, n, ok := m.rows[m.cursor].nums(); !ok || n != 4 || o != 0 {
 		t.Fatalf("cursor should still be on new line 4, got old=%d new=%d ok=%v", o, n, ok)
 	}
+	// The status bar shows how far into the file the cursor is.
+	if !strings.Contains(plain, "4/10 40%") {
+		t.Fatalf("status bar should show file position:\n%s", plain)
+	}
 	// Threads still interleave under their lines.
 	if !strings.Contains(plain, "@alice") {
 		t.Fatalf("threads should render in full view")
@@ -439,6 +443,9 @@ func TestFullFileView(t *testing.T) {
 	m.handleKey(tea.KeyPressMsg{Code: 'F', Text: "F"})
 	if m.full || m.showingFull() {
 		t.Fatalf("F again should return to hunks")
+	}
+	if strings.Contains(ansi.Strip(m.View().Content), "/10 ") {
+		t.Fatalf("file position should only show in full view")
 	}
 	if _, n, _ := m.rows[m.cursor].nums(); n != 5 {
 		t.Fatalf("cursor should remain on new line 5, got %d", n)

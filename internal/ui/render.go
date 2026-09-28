@@ -696,17 +696,59 @@ func (m *Model) renderStatus(width int) string {
 	if m.debugKeys && m.lastKey != "" {
 		right = lipgloss.NewStyle().Background(colBarBg).Foreground(colWarn).Bold(true).Render("key: "+m.lastKey) + styBar.Render("  ") + right
 	}
+	pos := ""
+	if m.screen == screenDiff && m.showingFull() {
+		if cur, total, ok := m.filePosition(); ok {
+			pos = styBarKey.Render(fmt.Sprintf(" %d/%d %d%% ", cur, total, cur*100/total))
+		}
+	}
 	lw := ansi.StringWidth(left)
 	rw := ansi.StringWidth(right)
-	if lw+rw > width {
+	pw := ansi.StringWidth(pos)
+	if lw+rw+pw > width {
 		right = ""
 		rw = 0
+	}
+	if lw+pw <= width {
+		right += pos
+		rw += pw
 	}
 	fill := width - lw - rw
 	if fill < 0 {
 		return truncate(left, width)
 	}
 	return left + styBar.Render(strings.Repeat(" ", fill)) + right
+}
+
+// filePosition reports the cursor's line in the full-file view and the file's
+// line count, on the new side (the old side for a deleted file). Rows without
+// a line of their own (threads, notes, deleted lines) take the nearest line
+// above them.
+func (m *Model) filePosition() (cur, total int, ok bool) {
+	old := m.files[m.fileIdx].Status == diff.Deleted
+	num := func(l *diff.Line) int {
+		if old {
+			return l.OldNum
+		}
+		return l.NewNum
+	}
+	for _, h := range m.viewFile().Hunks {
+		for i := range h.Lines {
+			total = max(total, num(&h.Lines[i]))
+		}
+	}
+	if total == 0 {
+		return 0, 0, false
+	}
+	for i := min(m.cursor, len(m.rows)-1); i >= 0 && cur == 0; i-- {
+		o, n, _ := m.rows[i].nums()
+		if old {
+			cur = o
+		} else {
+			cur = n
+		}
+	}
+	return max(cur, 1), total, true
 }
 
 // hk renders the primary key of an action for a status-bar hint.
