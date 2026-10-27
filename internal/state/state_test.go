@@ -112,3 +112,39 @@ func TestNotesRoundTrip(t *testing.T) {
 		t.Fatal("viewed marks and notes are independent")
 	}
 }
+
+func TestChatsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := PRKey("o/r", 7)
+	at := time.Now().Truncate(time.Second)
+	s.SetChats(pr, []Chat{{
+		ID: "1", Path: "a.go", Loc: "a.go:3-4", Line: 4, Side: "RIGHT",
+		Comment: ChatComment{Line: 4, Side: "RIGHT", StartLine: 3, StartSide: "RIGHT"},
+		Dir:     "/src/repo", Session: "s1", Context: "ctx", Fallback: "fb",
+		Entries:   []ChatEntry{{Q: "why?", A: "because", At: at}},
+		CreatedAt: at, UpdatedAt: at,
+	}})
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := s2.GetChats(pr)
+	if len(got) != 1 || got[0].Session != "s1" || got[0].Comment.StartLine != 3 || got[0].Entries[0].A != "because" || !got[0].Entries[0].At.Equal(at) {
+		t.Fatalf("round trip: %+v", got)
+	}
+	got[0].Loc = "changed"
+	if s2.GetChats(pr)[0].Loc != "a.go:3-4" {
+		t.Fatal("GetChats should return a copy")
+	}
+	s2.SetChats(pr, nil)
+	if _, ok := s2.Chats[pr]; ok {
+		t.Fatal("empty chats should drop the key")
+	}
+}

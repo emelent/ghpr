@@ -32,16 +32,17 @@ internal/gh          gh CLI wrapper: run() -> exec gh; REST via `gh api`, GraphQ
 internal/diff        unified diff parser (Parse, ParseHunks), side-by-side pairing, Expand for full-file view
 internal/ui          the whole TUI: one Model, many files split by feature
 internal/keys        key bindings: defaults table, TOML overrides, Translate()
-internal/state       JSON store (viewed.json): viewed marks, last position, notes; keyed "owner/repo#N"
+internal/state       JSON store (viewed.json): viewed marks, last position, notes, Claude chats; keyed "owner/repo#N"
 internal/editor      Neovim hand-off (--remote-expr) + tmux window switch
+internal/claude      `claude -p --output-format json` wrapper (Ask, --resume for follow-ups; runs in the checkout with read-only tools when $NVIM_SOCK is set and HEAD is the PR head)
 ```
 
 ### The single Model (`internal/ui/model.go`)
 
 One `Model` holds everything. Two orthogonal state axes decide what a key or mouse event does:
 
-- `screen`: `screenPicker` (PR list, a bubbles `list.Model`), `screenDiff`, `screenComments` (open threads, with `/` filtering, `r` replying through `overlayInput` below the list and `x` resolving), `screenNotes`. Note `screenPicker` is the zero value; never test "came from a list" with `!= screenDiff`, use `hasBack()`.
-- `overlay` (diff screen only): `overlayInput` (textarea for comments/reviews/merge message), `overlayReview`, `overlayMerge`, `overlayState` (close/reopen), `overlayDelete`/`overlayEdit` (comment picker), `overlaySearch`, `overlayFiles` (fuzzy file picker), `overlayGlobal` (all-files search), `overlayNote`, `overlayHelp`.
+- `screen`: `screenPicker` (PR list, a bubbles `list.Model`), `screenDiff`, `screenComments` (open threads, with `/` filtering, `r` replying through `overlayInput` below the list and `x` resolving), `screenNotes`, `screenChats` (saved Claude conversations, chats.go). Note `screenPicker` is the zero value; never test "came from a list" with `!= screenDiff`, use `hasBack()`.
+- `overlay` (diff screen only): `overlayInput` (textarea for comments/reviews/merge message), `overlayReview`, `overlayMerge`, `overlayState` (close/reopen), `overlayDelete`/`overlayEdit` (comment picker), `overlaySearch`, `overlayFiles` (fuzzy file picker), `overlayGlobal` (all-files search), `overlayNote`, `overlayHelp`, `overlayAnswer` (Claude's answer panel below the diff, ask.go).
 
 `Update` handles messages; `handleKey` dispatches by screen, then overlay, then file-panel focus, then the diff switch. `view()` composes header + body + status bar; overlays either replace the right pane (help, file picker, global search) or sit below the diff (input).
 
@@ -57,7 +58,7 @@ Handlers still `switch` on the *default* key names (`case "j", "down"`). `handle
 
 ### Async work
 
-`m.action(label, refresh, fn)` runs fn in a tea.Cmd and returns `actionMsg`; `refresh=true` re-reads threads afterwards (and the PR when nothing else is still out). Requests run concurrently: each one is an `inflight` entry in `m.running` until its `actionMsg` seq lands, `m.busy` is the derived bar label ("Resolve thread + 2 more…") and `refreshBusy` rebuilds it. `m.actionOn(label, key, thread, …)` adds two things to that: `key` refuses a repeat of the same operation on the same target while it is out (`resolve:<id>`, `merge`, `review`, `state`), and `thread` marks that review thread as waiting in both the diff and the comments list (`threadWorking`). fn runs in another goroutine, so capture what it needs (`c := m.client`) instead of reading the model inside it. Loads use `pending` counting (`loadAll`, `loadDone`) and keep their own label in `loadLabel`; `fetchPR`/`fetchThreads` carry a seq so a slow answer cannot overwrite a newer one. Status messages via `setStatus` auto-clear after 5s and take precedence in the bar over passive info (active search, note text).
+`m.action(label, refresh, fn)` runs fn in a tea.Cmd and returns `actionMsg`; `refresh=true` re-reads threads afterwards (and the PR when nothing else is still out). Requests run concurrently: each one is an `inflight` entry in `m.running` until its `actionMsg` seq lands, `m.busy` is the derived bar label ("Resolve thread + 2 more…") and `refreshBusy` rebuilds it. `m.actionOn(label, key, thread, …)` adds two things to that: `key` refuses a repeat of the same operation on the same target while it is out (`resolve:<id>`, `merge`, `review`, `state`), and `thread` marks that review thread as waiting in both the diff and the comments list (`threadWorking`). fn runs in another goroutine, so capture what it needs (`c := m.client`) instead of reading the model inside it. Requests that return more than an error (asking Claude: `claudeMsg`) call `m.startInflight` directly and `finishAction` when their message lands; questions to Claude are tracked in `m.asking` (one per conversation, key `ask:<chat id>`), and submitting returns to the diff instead of waiting in the answer panel. Loads use `pending` counting (`loadAll`, `loadDone`) and keep their own label in `loadLabel`; `fetchPR`/`fetchThreads` carry a seq so a slow answer cannot overwrite a newer one. Status messages via `setStatus` auto-clear after 5s and take precedence in the bar over passive info (active search, note text).
 
 ### Layout constants used by the mouse
 

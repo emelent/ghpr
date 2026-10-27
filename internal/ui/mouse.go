@@ -93,6 +93,32 @@ func (m *Model) handleMouse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.screen == screenChats {
+		switch e := msg.(type) {
+		case tea.MouseWheelMsg:
+			switch e.Button {
+			case tea.MouseWheelUp:
+				if m.chIdx > 0 {
+					m.chIdx--
+				}
+			case tea.MouseWheelDown:
+				if m.chIdx+1 < len(m.chats) {
+					m.chIdx++
+				}
+			}
+		case tea.MouseClickMsg:
+			if e.Button != tea.MouseLeft {
+				return m, nil
+			}
+			if i := m.chatAtY(e.Y); i >= 0 {
+				if i == m.chIdx {
+					return m, m.openChat()
+				}
+				m.chIdx = i
+			}
+		}
+		return m, nil
+	}
 	if m.overlay == overlayHelp {
 		if _, ok := msg.(tea.MouseClickMsg); ok {
 			m.overlay = overlayNone

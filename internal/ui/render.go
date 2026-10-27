@@ -632,6 +632,7 @@ func (m *Model) renderStatus(width int) string {
 			m.hk2(keys.Diff, "down", "up") + styBar.Render(" extend  ") +
 			m.hk(keys.Diff, "comment") + styBar.Render(" comment  ") +
 			m.hk(keys.Diff, "copy") + styBar.Render(" copy  ") +
+			m.hk(keys.Diff, "ask") + styBar.Render(" ask Claude  ") +
 			m.hk(keys.Diff, "cancel") + styBar.Render(" cancel")
 	case m.status != "":
 		if m.statusErr {
@@ -663,6 +664,10 @@ func (m *Model) renderStatus(width int) string {
 		right = m.hk(keys.Input, "submit") + styBarDim.Render(" merge  ") + m.hk(keys.Input, "cancel") + styBarDim.Render(" cancel ")
 	case m.overlay == overlayInput:
 		right = m.hk(keys.Input, "submit") + styBarDim.Render(" submit  ") + m.hk(keys.Input, "cancel") + styBarDim.Render(" cancel ")
+	case m.overlay == overlayAnswer:
+		right = m.hk2(keys.Answer, "down", "up") + styBarDim.Render(" scroll  ") + m.hk(keys.Answer, "follow_up") + styBarDim.Render(" follow-up  ") +
+			m.hk(keys.Answer, "copy") + styBarDim.Render(" copy  ") + m.hk(keys.Answer, "comment") + styBarDim.Render(" comment  ") +
+			m.hk(keys.Answer, "close") + styBarDim.Render(" close ")
 	case m.screen == screenComments:
 		resolved := " resolved  "
 		if m.cmShowResolved {
@@ -675,6 +680,9 @@ func (m *Model) renderStatus(width int) string {
 	case m.screen == screenNotes:
 		right = m.hk2(keys.Notes, "down", "up") + styBarDim.Render(" move  ") + m.hk(keys.Notes, "open") + styBarDim.Render(" go to line  ") +
 			m.hk(keys.Notes, "delete") + styBarDim.Render(" remove  ") + m.hk(keys.Notes, "close") + styBarDim.Render(" close ")
+	case m.screen == screenChats:
+		right = m.hk2(keys.Chats, "down", "up") + styBarDim.Render(" move  ") + m.hk(keys.Chats, "open") + styBarDim.Render(" open  ") +
+			m.hk(keys.Chats, "delete") + styBarDim.Render(" remove  ") + m.hk(keys.Chats, "close") + styBarDim.Render(" close ")
 	case m.screen == screenPicker:
 		right = styBarKey.Render(m.keys.Label(keys.List, "open")) + styBarDim.Render(" open  ") + m.hk(keys.List, "cycle_state") + styBarDim.Render(" state: "+m.listState+"  ") +
 			styBarKey.Render("/") + styBarDim.Render(" filter  ") + m.hk(keys.List, "quit") + styBarDim.Render(" quit ")
@@ -825,6 +833,8 @@ func (m *Model) renderHelp(width, height int) []string {
 		{acts: d("comment"), desc: "comment on the current line (or selection)"},
 		{acts: d("select"), desc: "start / stop selecting lines for a multi-line comment; the mouse selects too (click and drag, or shift-click to extend)"},
 		{acts: d("copy"), desc: "copy the selected lines to the clipboard (the line under the cursor when nothing is selected); diff markers are stripped, threads copy as @author: body"},
+		{acts: d("ask"), desc: "ask Claude (the claude CLI) about the selected lines or the line under the cursor (with $NVIM_SOCK set it reads the checkout in the current directory); Claude answers in the background while you keep reviewing (several questions can be out at once) and the answer opens below the diff: j/k scroll, p follow-up, y copy, c turns it into a comment draft, esc closes"},
+		{acts: d("chats"), desc: "Claude conversations on this PR, kept between sessions: j/k move, l opens one below the diff at its lines (p there continues it, h comes back), d removes, esc closes"},
 		{acts: d("reply"), desc: "reply to the thread under the cursor"},
 		{acts: d("resolve"), desc: "resolve / unresolve the thread under the cursor"},
 		{acts: d("delete_comment"), desc: "delete one of your comments in the thread under the cursor (y to confirm)"},

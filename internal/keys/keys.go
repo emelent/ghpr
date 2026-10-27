@@ -26,7 +26,9 @@ const (
 	Files    = "files"    // file panel focused (unmatched keys fall through to diff)
 	Comments = "comments" // comments screen
 	Notes    = "notes"    // notes screen
+	Chats    = "chats"    // Claude conversations screen
 	Input    = "input"    // multi-line text entry
+	Answer   = "answer"   // Claude's answer panel
 	Prompt   = "prompt"   // single-line prompts: search, file picker, all-files search, note
 	Review   = "review"   // review menu
 	Merge    = "merge"    // merge menu
@@ -40,7 +42,9 @@ var contextDesc = map[string]string{
 	Files:    "the file panel while it has focus; keys not listed here fall through to [diff]",
 	Comments: "the comments screen (i)",
 	Notes:    "the notes screen (A)",
-	Input:    "multi-line text entry (comments, reviews, merge message)",
+	Chats:    "the Claude conversations screen (P)",
+	Input:    "multi-line text entry (comments, reviews, merge message, questions for Claude)",
+	Answer:   "Claude's answer panel below the diff (p)",
 	Prompt:   "single-line prompts: / search, ctrl+p file picker, ctrl+/ search, note text. Printable keys type, so bind only control keys here",
 	Review:   "the review menu (v)",
 	Merge:    "the merge menu (M)",
@@ -83,6 +87,8 @@ var Defaults = []Binding{
 	{Diff, "select", []string{"V"}, "start / stop selecting lines"},
 	{Diff, "cancel", []string{"esc"}, "cancel the selection, otherwise clear the search"},
 	{Diff, "copy", []string{"y"}, "copy the selection to the clipboard"},
+	{Diff, "ask", []string{"p"}, "ask Claude about the line or selection"},
+	{Diff, "chats", []string{"P"}, "Claude conversations on this PR"},
 	{Diff, "comment", []string{"c"}, "comment on the line or selection"},
 	{Diff, "reply", []string{"r"}, "reply to the thread under the cursor"},
 	{Diff, "resolve", []string{"x"}, "resolve / unresolve the thread under the cursor"},
@@ -139,6 +145,27 @@ var Defaults = []Binding{
 
 	{Input, "submit", []string{"ctrl+s", "super+j", "meta+j"}, "submit"},
 	{Input, "cancel", []string{"esc"}, "cancel"},
+
+	{Chats, "close", []string{"esc", "P", "q"}, "back to the diff"},
+	{Chats, "down", []string{"j", "down"}, "next conversation"},
+	{Chats, "up", []string{"k", "up"}, "previous conversation"},
+	{Chats, "top", []string{"g", "home"}, "first conversation"},
+	{Chats, "bottom", []string{"G", "end"}, "last conversation"},
+	{Chats, "open", []string{"l", "right", "enter"}, "open it below the diff at its lines"},
+	{Chats, "delete", []string{"d", "x"}, "remove the conversation"},
+	{Chats, "help", []string{"?"}, "help"},
+	{Chats, "force_quit", []string{"Q"}, "quit"},
+
+	{Answer, "close", []string{"esc", "q"}, "close the answer"},
+	{Answer, "down", []string{"j", "down"}, "scroll down"},
+	{Answer, "up", []string{"k", "up"}, "scroll up"},
+	{Answer, "half_page_down", []string{"ctrl+d", "pgdown", "space"}, "half page down"},
+	{Answer, "half_page_up", []string{"ctrl+u", "pgup"}, "half page up"},
+	{Answer, "top", []string{"g", "home"}, "top of the conversation"},
+	{Answer, "bottom", []string{"G", "end"}, "bottom of the conversation"},
+	{Answer, "follow_up", []string{"p"}, "ask a follow-up question"},
+	{Answer, "copy", []string{"y"}, "copy the latest answer to the clipboard"},
+	{Answer, "comment", []string{"c"}, "comment on the lines with the latest answer as a draft"},
 
 	{Prompt, "accept", []string{"enter"}, "accept / open the selection"},
 	{Prompt, "cancel", []string{"esc"}, "cancel"},

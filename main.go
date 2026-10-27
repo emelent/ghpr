@@ -37,6 +37,8 @@ Flags:
   --syntax name           chroma style for syntax highlighting (default: the theme's own, env GHPR_SYNTAX)
   -s, --split             start in side-by-side mode
   -S, --state name        PR picker filter: open (default), closed, merged, all
+  --claude path           Claude Code CLI used by p (ask Claude) (default: claude, env GHPR_CLAUDE)
+  --claude-model name     model for p, e.g. sonnet or opus (default: the CLI's own, env GHPR_CLAUDE_MODEL)
   --debug-keys            show the name of every key press in the status bar
   --print-keys            print the default key bindings as TOML and exit
   -V, --version           print the version and exit
@@ -47,13 +49,15 @@ Keys inside the app: press ? for the full list.
 }
 
 func main() {
-	var repo, theme, syntax, listState string
+	var repo, theme, syntax, listState, claudeBin, claudeModel string
 	var split, help, showVersion, debugKeys, printKeys bool
 	flag.StringVar(&repo, "R", "", "")
 	flag.StringVar(&repo, "repo", "", "")
 	flag.StringVar(&theme, "t", os.Getenv("GHPR_THEME"), "")
 	flag.StringVar(&theme, "theme", os.Getenv("GHPR_THEME"), "")
 	flag.StringVar(&syntax, "syntax", os.Getenv("GHPR_SYNTAX"), "")
+	flag.StringVar(&claudeBin, "claude", os.Getenv("GHPR_CLAUDE"), "")
+	flag.StringVar(&claudeModel, "claude-model", os.Getenv("GHPR_CLAUDE_MODEL"), "")
 	flag.StringVar(&listState, "S", "open", "")
 	flag.StringVar(&listState, "state", "open", "")
 	flag.BoolVar(&split, "s", false, "")
@@ -120,6 +124,7 @@ func main() {
 	model.SetSplit(split)
 	model.SetListState(listState)
 	model.SetDebugKeys(debugKeys)
+	model.SetClaude(claudeBin, claudeModel)
 	if dir, err := state.Dir(); err == nil {
 		if st, err := state.Open(dir); err == nil {
 			model.SetStore(st)

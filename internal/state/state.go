@@ -42,13 +42,54 @@ type Note struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// Store is the on-disk state. Keys of Viewed, Last and Notes are
+// Chat is a conversation with Claude about lines of a pull request, kept so
+// it can be read and continued in a later session.
+type Chat struct {
+	ID   string `json:"id"`
+	Path string `json:"path"`
+	Loc  string `json:"loc"`            // what was asked about: "main.go:4-6"
+	Line int    `json:"line,omitempty"` // line to return to (new side, old side when Side is LEFT)
+	Side string `json:"side,omitempty"`
+	// Where a comment built from an answer goes, or why none can.
+	Comment    ChatComment `json:"comment"`
+	CommentErr string      `json:"commentErr,omitempty"`
+	// Dir is the checkout Claude ran in with file access ("" without one);
+	// Session is the Claude Code session to resume there.
+	Dir     string `json:"dir,omitempty"`
+	Session string `json:"session,omitempty"`
+	// Context is what opened the conversation; Fallback is the same without
+	// relying on a checkout, for replaying the conversation into a new
+	// session when the old one cannot be resumed.
+	Context   string      `json:"context"`
+	Fallback  string      `json:"fallback,omitempty"`
+	Entries   []ChatEntry `json:"entries"`
+	CreatedAt time.Time   `json:"createdAt"`
+	UpdatedAt time.Time   `json:"updatedAt"`
+}
+
+// ChatComment is a line comment's anchor (see gh.LineComment).
+type ChatComment struct {
+	Line      int    `json:"line,omitempty"`
+	Side      string `json:"side,omitempty"`
+	StartLine int    `json:"startLine,omitempty"`
+	StartSide string `json:"startSide,omitempty"`
+}
+
+// ChatEntry is one question and its answer.
+type ChatEntry struct {
+	Q  string    `json:"q"`
+	A  string    `json:"a"`
+	At time.Time `json:"at"`
+}
+
+// Store is the on-disk state. Keys of Viewed, Last, Notes and Chats are
 // "owner/repo#123"; Viewed is further keyed by file path within the PR.
 type Store struct {
 	path   string
 	Viewed map[string]map[string]Viewed `json:"viewed"`
 	Last   map[string]Position          `json:"last,omitempty"`
 	Notes  map[string][]Note            `json:"notes,omitempty"`
+	Chats  map[string][]Chat            `json:"chats,omitempty"`
 }
 
 // Dir returns the directory used for state: $GHPR_STATE_DIR, otherwise
@@ -67,7 +108,7 @@ func Dir() (string, error) {
 // Open loads the store from dir (creating an empty one when the file does
 // not exist yet).
 func Open(dir string) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, "viewed.json"), Viewed: map[string]map[string]Viewed{}, Last: map[string]Position{}, Notes: map[string][]Note{}}
+	s := &Store{path: filepath.Join(dir, "viewed.json"), Viewed: map[string]map[string]Viewed{}, Last: map[string]Position{}, Notes: map[string][]Note{}, Chats: map[string][]Chat{}}
 	b, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
@@ -87,6 +128,9 @@ func Open(dir string) (*Store, error) {
 	if s.Notes == nil {
 		s.Notes = map[string][]Note{}
 	}
+	if s.Chats == nil {
+		s.Chats = map[string][]Chat{}
+	}
 	return s, nil
 }
 
@@ -102,6 +146,21 @@ func (s *Store) SetNotes(pr string, notes []Note) {
 		return
 	}
 	s.Notes[pr] = append([]Note(nil), notes...)
+}
+
+// GetChats returns the Claude conversations recorded for a PR, oldest first.
+func (s *Store) GetChats(pr string) []Chat {
+	return append([]Chat(nil), s.Chats[pr]...)
+}
+
+// SetChats replaces the conversations for a PR; an empty list removes the
+// entry.
+func (s *Store) SetChats(pr string, chats []Chat) {
+	if len(chats) == 0 {
+		delete(s.Chats, pr)
+		return
+	}
+	s.Chats[pr] = append([]Chat(nil), chats...)
 }
 
 // Path returns the backing file.

@@ -24,6 +24,7 @@ reuses your existing `gh` login and works with any host `gh` is configured for.
 - Close and reopen PRs
 - PR picker with text filter and open / closed / merged / all state filter
 - Post general PR comments
+- Ask Claude about the selected lines without leaving the review; the answer opens below the diff, takes follow-up questions and can become a comment draft. Conversations are kept per PR, so you can reread and continue them later (uses the Claude Code CLI)
 - Spinner-based loaders for every fetch and action, with success/error feedback; requests run side by side, so you can reply to one thread while another resolves, and each thread waiting on an answer is marked
 - Interactive picker of open PRs when no PR is given
 
@@ -31,6 +32,7 @@ reuses your existing `gh` login and works with any host `gh` is configured for.
 
 - Go 1.25 or newer (to build)
 - `gh` installed and authenticated: run `gh auth status` to check, `gh auth login` to sign in
+- Optional: [Claude Code](https://claude.com/claude-code) (`claude`) installed and signed in, for asking Claude about code (`p`)
 
 ## Install
 
@@ -81,6 +83,8 @@ ghpr https://github.com/owner/repo/pull/42
 | `--syntax name` | Chroma style for syntax highlighting. Defaults to the theme's pairing (`catppuccin-mocha` for github-dark, `solarized-dark` for solarized-dark). Env: `GHPR_SYNTAX` |
 | `-s, --split` | Start in side-by-side mode |
 | `-S, --state name` | Initial picker filter: `open` (default), `closed`, `merged` or `all` |
+| `--claude path` | Claude Code CLI used by `p` (default: `claude`). Env: `GHPR_CLAUDE` |
+| `--claude-model name` | Model for `p`, e.g. `sonnet` or `opus` (default: the CLI's own). Env: `GHPR_CLAUDE_MODEL` |
 | `--debug-keys` | Show the name of every key press in the status bar |
 | `-V, --version` | Print the version and exit |
 | `-h, --help` | Show help |
@@ -138,6 +142,8 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 | `c` | Comment on the line under the cursor, or on the selected range |
 | `V` | Start selecting lines; move with `j`/`k`, then `c` to comment on the range, `esc` to cancel |
 | `y` | Copy the selection to the clipboard, or the line under the cursor when nothing is selected. Diff markers are dropped so the text pastes as code; a thread copies as `@author: body`. Goes to the clipboard both through the platform tool (`pbcopy`, `xclip`, `wl-copy`) and through OSC 52, so it also works over SSH — in tmux that needs `set -g set-clipboard on` |
+| `p` | Ask Claude about the selection, or the line under the cursor: type a question, `ctrl+s` sends it. See [Asking Claude](#asking-claude) |
+| `P` | List the Claude conversations on this PR (kept between sessions) |
 | `r` | Reply to the thread under the cursor |
 | `x` | Resolve / unresolve the thread under the cursor |
 | `d` | Delete one of your comments in the thread under the cursor. The newest is preselected; `j`/`k` pick another, `y` confirms |
@@ -149,6 +155,47 @@ When the file panel is focused in tree mode: `j`/`k` move through directories an
 | `o` | Open the current file at the cursor's line in Neovim (see below); does nothing unless an editor is listening for this PR |
 | `O` | Open the PR in the browser |
 | `R` | Refresh PR, diff and threads |
+
+### Asking Claude
+
+`p` sends your question to the [Claude Code](https://claude.com/claude-code) CLI
+(`claude -p`) with the PR title and description, the file, the selected lines
+(with their `+`/`-` markers) and any review thread on them. It uses your Claude
+Code login; ghpr needs no API key.
+
+When `$NVIM_SOCK` is set and the current directory is a git checkout at the PR's
+head commit (the one the Neovim hand-off edits), Claude runs there with read-only
+file tools (Read, Grep, Glob; no edits or commands) and is told to read the file
+and anything else it needs. Otherwise Claude gets no tools and about ten lines
+either side of the selection go along instead; when the checkout is at another
+commit, the question box says so.
+
+Claude answers in the background: once the question is sent you are back in the
+diff and can keep moving around, open other files or ask about other lines (one
+question at a time per conversation; the status bar shows what is still out).
+A conversation still waiting shows "Claude is thinking…" in `P`. The answer opens
+in a panel below the diff when it lands, or waits behind `P` if you are busy with
+something else:
+
+| Key | Action |
+| --- | --- |
+| `j` / `k`, `ctrl+d` / `ctrl+u`, `g` / `G` | Scroll |
+| `p` | Ask a follow-up (continues the same Claude session) |
+| `y` | Copy the latest answer |
+| `c` | Comment on the lines you asked about, with the answer as the draft |
+| `esc` / `q` | Close |
+
+Pressing `p` in the diff starts a new conversation. Every conversation is saved
+per PR next to your notes (`viewed.json`), so it survives quitting ghpr. `P` lists
+them (`enter` opens one below the diff at its lines, `d` removes it), and `p` in
+the panel continues it, even days later. ghpr resumes the Claude session in the
+directory it ran in; when that is not possible (ghpr started elsewhere, the
+session is gone, or the checkout moved off the PR head) it starts a new session
+and replays the context and the conversation so far.
+
+An answer that arrives while another prompt is open waits: the status bar says
+so and `P` lists it. Use `--claude-model` to pick a model and `--claude` if the
+binary is not on `PATH`.
 
 ### Editing alongside Neovim
 

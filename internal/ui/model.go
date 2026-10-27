@@ -33,6 +33,7 @@ const (
 	screenDiff
 	screenComments // every review thread, with its code and first comment
 	screenNotes    // the reviewer's notes on lines
+	screenChats    // conversations with Claude about lines (P)
 )
 
 type overlayKind int
@@ -50,6 +51,7 @@ const (
 	overlayGlobal // search across every file (ctrl+/)
 	overlayNote   // typing the text of a new line note (a)
 	overlayHelp
+	overlayAnswer // Claude's answer below the diff (p, P)
 )
 
 type inputKind int
@@ -61,6 +63,7 @@ const (
 	inputReview
 	inputPRComment
 	inputMerge
+	inputAsk // a question for Claude about the selection
 )
 
 const (
@@ -211,6 +214,19 @@ type Model struct {
 	inEditThread string // the thread it belongs to, for the pending mark
 	inEvent      gh.ReviewEvent
 
+	// asking Claude (ask.go) and the conversations screen (chats.go)
+	claudeBin   string
+	claudeModel string
+	chats       []state.Chat // the PR's conversations, oldest first
+	chatID      string       // conversation shown in the answer panel
+	askDraft    state.Chat   // the conversation a new question starts
+	askFollow   bool         // the open question continues chatID
+	asking      []asking     // questions still with Claude, at most one per conversation
+	askScroll   int          // first visible panel line; -1 jumps to the newest answer
+	askGen      int          // bumped on leaving the PR, to drop late answers
+	chIdx       int          // selected conversation in the list
+	chScroll    int          // first visible conversation
+
 	fatal error
 }
 
@@ -229,7 +245,8 @@ func New(client *gh.Client, number int, syntax string) *Model {
 	ta.SetHeight(inputPanelH - 3)
 	ta.SetVirtualCursor(true)
 	tas := ta.Styles()
-	tas.Focused.CursorLine = lipgloss.NewStyle()
+	// The line being typed on is highlighted like the diff's cursor line.
+	tas.Focused.CursorLine = lipgloss.NewStyle().Background(colCtxCurBg)
 	tas.Focused.Prompt = lipgloss.NewStyle().Foreground(colWarn)
 	tas.Blurred.Prompt = lipgloss.NewStyle().Foreground(colDim)
 	ta.SetStyles(tas)
@@ -673,14 +690,25 @@ func (m *Model) action(label string, refresh bool, fn func() error) tea.Cmd {
 // Requests do not wait for each other: key refuses only a repeat of the
 // same thing on the same target, and thread ties the request to a review
 // thread so the comments list can show it is waiting.
+// startInflight records a request as running, for the spinner and the
+// duplicate guard; ok is false when key is already running. Requests that
+// need to return more than an error (asking Claude) use it directly and
+// call finishAction when their message lands.
+func (m *Model) startInflight(label, key, thread string) (seq int, ok bool) {
+	if key != "" && m.runningKey(key) {
+		return 0, false
+	}
+	m.runSeq++
+	m.running = append(m.running, inflight{seq: m.runSeq, label: label, key: key, thread: thread})
+	m.refreshBusy()
+	return m.runSeq, true
+}
+
 func (m *Model) actionOn(label, key, thread string, refresh bool, fn func() error) tea.Cmd {
 	if key != "" && m.runningKey(key) {
 		return m.setStatus(label+" is already running", true)
 	}
-	m.runSeq++
-	seq := m.runSeq
-	m.running = append(m.running, inflight{seq: seq, label: label, key: key, thread: thread})
-	m.refreshBusy()
+	seq, _ := m.startInflight(label, key, thread)
 	return tea.Batch(m.tick(), func() tea.Msg {
 		return actionMsg{seq: seq, label: label, err: fn(), refresh: refresh}
 	})
@@ -796,6 +824,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		dropped := m.reconcileViewed()
 		m.loadNotes()
+		m.loadChats()
 		m.spanCache = map[int]map[*diff.Line][]Span{}
 		m.fullFiles = map[int]*diff.File{}
 		m.fullSpans = map[int]map[*diff.Line][]Span{}
@@ -869,6 +898,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case claudeMsg:
+		return m, m.gotAnswer(msg)
+
 	case tea.KeyPressMsg:
 		if m.debugKeys {
 			m.lastKey = msg.String()
@@ -931,12 +963,19 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.screen == screenNotes {
 		return m.handleNotesKey(m.keys.Translate(keys.Notes, key))
 	}
+	if m.screen == screenChats {
+		return m.handleChatsKey(m.keys.Translate(keys.Chats, key))
+	}
 
 	switch m.overlay {
 	case overlayInput:
 		switch m.keys.Translate(keys.Input, key) {
 		case "esc":
+			back := m.inKind == inputAsk && m.askFollow && m.activeChat() != nil
 			m.closeInput()
+			if back {
+				m.overlay = overlayAnswer // a cancelled follow-up returns to the answer
+			}
 			return m, nil
 		case "ctrl+s", "super+j", "meta+j":
 			// ctrl+s submits; super/meta+j is kept as a quiet extra for
@@ -1011,6 +1050,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case overlayHelp:
 		m.overlay = overlayNone
 		return m, nil
+
+	case overlayAnswer:
+		return m.handleAnswerKey(m.keys.Translate(keys.Answer, key))
 	}
 
 	if m.filesFocused {
@@ -1184,6 +1226,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.startDelete()
 	case "e":
 		return m, m.startEdit()
+	case "p":
+		return m, m.startAsk()
+	case "P":
+		return m, m.openChats()
 	case "y":
 		return m, m.yank()
 	}
@@ -1660,11 +1706,8 @@ func (m *Model) mainHeight() int { return max(3, m.height-3) }
 
 // viewportH is the number of diff rows visible (excluding pane header).
 func (m *Model) viewportH() int {
-	h := m.mainHeight() - 2
-	if m.overlay == overlayInput {
-		h -= inputPanelH
-	}
-	return max(1, h)
+	answer, input := m.belowDiff()
+	return max(1, m.mainHeight()-2-answer-input)
 }
 
 func (m *Model) invalidateLayout() {
@@ -1818,42 +1861,54 @@ func (m *Model) startComment() tea.Cmd {
 	if m.pr == nil {
 		return nil
 	}
+	lc, loc, errMsg := m.commentTarget()
+	if errMsg != "" {
+		return m.setStatus(errMsg, true)
+	}
+	m.inComment = lc
+	m.openInput(inputComment, "New comment on "+loc)
+	return nil
+}
+
+// commentTarget works out where a line comment would go: the selection, or
+// the line under the cursor. loc describes it for titles ("main.go:4-6
+// (RIGHT)"); errMsg says why no comment can go there.
+func (m *Model) commentTarget() (lc gh.LineComment, loc, errMsg string) {
+	if len(m.files) == 0 {
+		return lc, "", "No file to comment on"
+	}
 	f := &m.files[m.fileIdx]
 	if lo, hi, ok := m.selection(); ok {
 		start, end, startSide, side, ok := rangeAnchor(m.rows, lo, hi)
 		if !ok {
-			return m.setStatus("Selection contains no diff lines", true)
+			return lc, "", "Selection contains no diff lines"
 		}
 		if !f.InDiff(startSide, start) || !f.InDiff(side, end) {
-			return m.setStatus("GitHub only accepts comments on lines that are part of the diff", true)
+			return lc, "", "GitHub only accepts comments on lines that are part of the diff"
 		}
-		m.inComment = gh.LineComment{Path: f.Path(), Line: end, Side: side, StartLine: start, StartSide: startSide}
-		if !m.inComment.IsRange() {
-			m.inComment.StartLine, m.inComment.StartSide = 0, ""
-			m.openInput(inputComment, fmt.Sprintf("New comment on %s:%d (%s)", f.Path(), end, side))
-			return nil
+		lc = gh.LineComment{Path: f.Path(), Line: end, Side: side, StartLine: start, StartSide: startSide}
+		if !lc.IsRange() {
+			lc.StartLine, lc.StartSide = 0, ""
+			return lc, fmt.Sprintf("%s:%d (%s)", f.Path(), end, side), ""
 		}
-		loc := fmt.Sprintf("%s:%d-%d (%s)", f.Path(), start, end, side)
+		loc = fmt.Sprintf("%s:%d-%d (%s)", f.Path(), start, end, side)
 		if startSide != side {
 			loc = fmt.Sprintf("%s:%s %d → %s %d", f.Path(), startSide, start, side, end)
 		}
-		m.openInput(inputComment, "New comment on "+loc)
-		return nil
+		return lc, loc, ""
 	}
 	r := m.currentRow()
 	if r == nil {
-		return nil
+		return lc, "", "No line under the cursor"
 	}
 	line, side, ok := r.anchor()
 	if !ok {
-		return m.setStatus("Move the cursor onto a diff line to comment (V to select a range)", true)
+		return lc, "", "Move the cursor onto a diff line to comment (V to select a range)"
 	}
 	if !f.InDiff(side, line) {
-		return m.setStatus("GitHub only accepts comments on lines that are part of the diff", true)
+		return lc, "", "GitHub only accepts comments on lines that are part of the diff"
 	}
-	m.inComment = gh.LineComment{Path: f.Path(), Line: line, Side: side}
-	m.openInput(inputComment, fmt.Sprintf("New comment on %s:%d (%s)", f.Path(), line, side))
-	return nil
+	return gh.LineComment{Path: f.Path(), Line: line, Side: side}, fmt.Sprintf("%s:%d (%s)", f.Path(), line, side), ""
 }
 
 func (m *Model) startReply() tea.Cmd {
@@ -1998,7 +2053,9 @@ func (m *Model) currentNewLine() int {
 // hasBack reports whether the diff was entered from a list screen that h
 // should return to. Only the comments and notes screens qualify; the zero
 // value of backTo (the PR picker) means none.
-func (m *Model) hasBack() bool { return m.backTo == screenComments || m.backTo == screenNotes }
+func (m *Model) hasBack() bool {
+	return m.backTo == screenComments || m.backTo == screenNotes || m.backTo == screenChats
+}
 
 // openSelectedPR leaves the picker for the highlighted pull request.
 func (m *Model) openSelectedPR() tea.Cmd {
@@ -2029,6 +2086,7 @@ func (m *Model) backToList() tea.Cmd {
 	m.backTo = screenDiff
 	m.cmThreads = nil
 	m.notes = nil
+	m.resetAsk()
 	m.clearSelection()
 	m.closeInput()
 	m.fromPicker = false
@@ -2099,6 +2157,9 @@ func (m *Model) submitInput() tea.Cmd {
 	kind := m.inKind
 	needsBody := kind != inputMerge && (kind != inputReview || m.inEvent != gh.Approve)
 	if needsBody && body == "" {
+		if kind == inputAsk {
+			return m.setStatus("Question is empty", true)
+		}
 		return m.setStatus("Comment body is empty", true)
 	}
 	thread := m.inThread // closeInput clears it
@@ -2122,6 +2183,8 @@ func (m *Model) submitInput() tea.Cmd {
 		return m.actionOn("Edit comment", "", tid, true, func() error { return c.EditReviewComment(id, body) })
 	case inputPRComment:
 		return m.action("Post PR comment", false, func() error { return c.Comment(n, body) })
+	case inputAsk:
+		return m.submitAsk(body)
 	case inputMerge:
 		subject, msgBody := splitMessage(body)
 		return m.doMerge(gh.MergeOptions{Method: m.mergeMethod, DeleteBranch: m.mergeDelete, Subject: subject, Body: msgBody})
@@ -2168,6 +2231,9 @@ func (m *Model) view() string {
 	if m.screen == screenNotes {
 		return strings.Join(header, "\n") + "\n" + strings.Join(m.renderNotes(m.width, mainH), "\n") + "\n" + m.renderStatus(m.width)
 	}
+	if m.screen == screenChats {
+		return strings.Join(header, "\n") + "\n" + strings.Join(m.renderChats(m.width, mainH), "\n") + "\n" + m.renderStatus(m.width)
+	}
 	dw := m.diffWidth()
 
 	var right []string
@@ -2179,13 +2245,13 @@ func (m *Model) view() string {
 	case m.overlay == overlayGlobal:
 		right = m.renderGlobalSearch(dw, mainH)
 	default:
-		diffH := mainH
-		if m.overlay == overlayInput {
-			diffH -= inputPanelH
+		answerH, inputH := m.belowDiff()
+		right = m.renderDiff(dw, mainH-answerH-inputH)
+		if answerH > 0 {
+			right = append(right, m.renderAnswer(dw, answerH)...)
 		}
-		right = m.renderDiff(dw, diffH)
-		if m.overlay == overlayInput {
-			right = append(right, m.renderInput(dw, inputPanelH)...)
+		if inputH > 0 {
+			right = append(right, m.renderInput(dw, inputH)...)
 		}
 	}
 
