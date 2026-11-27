@@ -103,7 +103,10 @@ type Thread struct {
 	OriginalLine int
 	StartLine    int
 	DiffSide     string // "LEFT" or "RIGHT"
-	Comments     []Comment
+	// OnFile marks a comment on the file as a whole rather than on lines;
+	// Line and OriginalLine are 0 then.
+	OnFile   bool
+	Comments []Comment
 }
 
 // Comment is a single review comment within a thread.
@@ -489,6 +492,20 @@ func (c *Client) AddLineComment(number int, commitID string, lc LineComment) err
 		}
 	}
 	payload, _ := json.Marshal(fields)
+	endpoint := fmt.Sprintf("repos/%s/pulls/%d/comments", c.Repo, number)
+	_, err := run(payload, "api", "-X", "POST", endpoint, "--input", "-")
+	return err
+}
+
+// AddFileComment creates a new review thread on a file as a whole rather
+// than on a line. commitID is the PR head SHA.
+func (c *Client) AddFileComment(number int, commitID, path, body string) error {
+	payload, _ := json.Marshal(map[string]any{
+		"body":         body,
+		"commit_id":    commitID,
+		"path":         path,
+		"subject_type": "file",
+	})
 	endpoint := fmt.Sprintf("repos/%s/pulls/%d/comments", c.Repo, number)
 	_, err := run(payload, "api", "-X", "POST", endpoint, "--input", "-")
 	return err

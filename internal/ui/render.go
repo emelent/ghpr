@@ -141,7 +141,9 @@ func renderThread(t *gh.Thread, selected, working bool, width int, target *gh.Co
 		status += base.Foreground(colAccent).Render(" · sending")
 	}
 	loc := ""
-	if t.Line > 0 {
+	if t.OnFile {
+		loc = "file"
+	} else if t.Line > 0 {
 		loc = fmt.Sprintf("%s:%d", t.DiffSide, t.Line)
 		if t.StartLine > 0 && t.StartLine != t.Line {
 			loc = fmt.Sprintf("%s:%d-%d", t.DiffSide, t.StartLine, t.Line)
@@ -831,6 +833,7 @@ func (m *Model) renderHelp(width, height int) []string {
 		{acts: d("full_file"), desc: "toggle full file view (whole file with changes in place)"},
 		{acts: d("viewed"), desc: "mark / unmark the file as viewed; on a folder in the file tree, every file beneath it (auto-unmarked if a file changes later; synced with GitHub)"},
 		{acts: d("comment"), desc: "comment on the current line (or selection)"},
+		{acts: [][2]string{{keys.Diff, "file_comment"}, {keys.Files, "comment"}}, desc: "comment on the whole file (not a line); in the file list, on the selected file; file comments show at the top of the file"},
 		{acts: d("select"), desc: "start / stop selecting lines for a multi-line comment; the mouse selects too (click and drag, or shift-click to extend)"},
 		{acts: d("copy"), desc: "copy the selected lines to the clipboard (the line under the cursor when nothing is selected); diff markers are stripped, threads copy as @author: body"},
 		{acts: d("ask"), desc: "ask Claude (the claude CLI) about the selected lines or the line under the cursor (with $NVIM_SOCK set it reads the checkout in the current directory); Claude answers in the background while you keep reviewing (several questions can be out at once) and the answer opens below the diff: j/k scroll, p follow-up, y copy, c turns it into a comment draft, esc closes"},

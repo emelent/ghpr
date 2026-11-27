@@ -58,6 +58,7 @@ type inputKind int
 
 const (
 	inputComment inputKind = iota
+	inputFileComment
 	inputReply
 	inputEdit
 	inputReview
@@ -209,6 +210,7 @@ type Model struct {
 	inputTitle   string
 	inKind       inputKind
 	inComment    gh.LineComment
+	inFilePath   string // file being commented on (inputFileComment)
 	inThread     *gh.Thread
 	inEditID     int64  // review comment being edited (inputEdit)
 	inEditThread string // the thread it belongs to, for the pending mark
@@ -1143,6 +1145,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.action("Open in browser", false, func() error { return c.OpenInBrowser(n) })
 	case "v":
 		m.overlay = overlayReview
+	case "w":
+		return m, m.startFileComment()
 	case "C":
 		m.openInput(inputPRComment, fmt.Sprintf("Comment on PR #%d", m.number))
 	case "j", "down":
@@ -1254,7 +1258,7 @@ func (m *Model) handlePickKey(key string) (tea.Model, tea.Cmd) {
 		m.closePick()
 		if edit {
 			m.inEditID, m.inEditThread = c.DatabaseID, t.ID
-			m.openInput(inputEdit, fmt.Sprintf("Edit @%s's comment on %s:%d", c.Author, t.Path, max(t.Line, t.OriginalLine)))
+			m.openInput(inputEdit, fmt.Sprintf("Edit @%s's comment on %s", c.Author, threadWhere(t)))
 			m.ta.SetValue(strings.ReplaceAll(c.Body, "\r", ""))
 			m.ta.MoveToEnd()
 			return m, nil
@@ -1421,6 +1425,17 @@ func (m *Model) treeIndex() int {
 func (m *Model) handleFilesKey(key string) (bool, tea.Cmd) {
 	if len(m.files) == 0 {
 		return false, nil
+	}
+	if key == "c" {
+		if m.tree {
+			if len(m.treeNodes) == 0 {
+				m.rebuildTree()
+			}
+			if m.treeNodes[m.treeIndex()].isDir {
+				return true, m.setStatus("Select a file to comment on", true)
+			}
+		}
+		return true, m.startFileComment()
 	}
 	if !m.tree {
 		shown := m.shownFiles()
@@ -1870,6 +1885,21 @@ func (m *Model) startComment() tea.Cmd {
 	return nil
 }
 
+// startFileComment opens the input panel for a comment on the current file
+// as a whole rather than on one of its lines.
+func (m *Model) startFileComment() tea.Cmd {
+	if m.pr == nil {
+		return nil
+	}
+	if len(m.files) == 0 {
+		return m.setStatus("No file to comment on", true)
+	}
+	m.inFilePath = m.files[m.fileIdx].Path()
+	m.clearSelection()
+	m.openInput(inputFileComment, "New comment on the file "+m.inFilePath)
+	return nil
+}
+
 // commentTarget works out where a line comment would go: the selection, or
 // the line under the cursor. loc describes it for titles ("main.go:4-6
 // (RIGHT)"); errMsg says why no comment can go there.
@@ -1926,8 +1956,17 @@ func (m *Model) replyTo(t *gh.Thread) tea.Cmd {
 	}
 	m.inThread = t
 	first := t.Comments[0]
-	m.openInput(inputReply, fmt.Sprintf("Reply to @%s on %s:%d", first.Author, t.Path, max(t.Line, t.OriginalLine)))
+	m.openInput(inputReply, fmt.Sprintf("Reply to @%s on %s", first.Author, threadWhere(t)))
 	return nil
+}
+
+// threadWhere names a thread's place for titles: "main.go:12", or just the
+// path for a comment on the whole file.
+func threadWhere(t *gh.Thread) string {
+	if t.OnFile {
+		return t.Path
+	}
+	return fmt.Sprintf("%s:%d", t.Path, max(t.Line, t.OriginalLine))
 }
 
 // startDelete opens the delete confirmation for a comment in the thread
@@ -2171,6 +2210,11 @@ func (m *Model) submitInput() tea.Cmd {
 		lc.Body = body
 		return m.action("Post comment", true, func() error {
 			return c.AddLineComment(n, sha, lc)
+		})
+	case inputFileComment:
+		path, sha := m.inFilePath, m.pr.HeadRefOid
+		return m.action("Post file comment", true, func() error {
+			return c.AddFileComment(n, sha, path, body)
 		})
 	case inputReply:
 		if thread == nil || len(thread.Comments) == 0 {

@@ -21,6 +21,7 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
           originalLine
           startLine
           diffSide
+          subjectType
           comments(first: 100) {
             nodes {
               id
@@ -162,6 +163,7 @@ type threadsResponse struct {
 						OriginalLine *int   `json:"originalLine"`
 						StartLine    *int   `json:"startLine"`
 						DiffSide     string `json:"diffSide"`
+						SubjectType  string `json:"subjectType"`
 						Comments     struct {
 							Nodes []struct {
 								ID         string    `json:"id"`
@@ -231,6 +233,7 @@ func (c *Client) ReviewThreads(number int) ([]Thread, error) {
 				OriginalLine: deref(n.OriginalLine),
 				StartLine:    deref(n.StartLine),
 				DiffSide:     n.DiffSide,
+				OnFile:       n.SubjectType == "FILE",
 			}
 			for _, cm := range n.Comments.Nodes {
 				author := "ghost"

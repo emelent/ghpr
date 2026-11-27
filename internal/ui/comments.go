@@ -451,6 +451,8 @@ func (m *Model) renderCommentItem(t *gh.Thread, selected bool, width int) []stri
 	}
 	loc := t.Path
 	switch {
+	case t.OnFile:
+		loc += " (file)"
 	case t.Line > 0 && t.StartLine > 0 && t.StartLine != t.Line:
 		loc += fmt.Sprintf(":%d-%d", t.StartLine, t.Line)
 	case t.Line > 0:

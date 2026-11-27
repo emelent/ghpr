@@ -117,8 +117,8 @@ type anchorKey struct {
 }
 
 // buildRows flattens a file into rows, interleaving review threads under the
-// lines they are anchored to. Threads that no longer map onto the diff are
-// appended at the end of the file.
+// lines they are anchored to. Comments on the file as a whole come first;
+// threads that no longer map onto the diff are appended at the end of the file.
 func buildRows(f *diff.File, split bool, threads []gh.Thread) []row {
 	var rows []row
 	path := f.Path()
@@ -128,6 +128,10 @@ func buildRows(f *diff.File, split bool, threads []gh.Thread) []row {
 	for i := range threads {
 		t := &threads[i]
 		if t.Path != path {
+			continue
+		}
+		if t.OnFile {
+			rows = append(rows, row{kind: rowThread, thread: t})
 			continue
 		}
 		fileThreads = append(fileThreads, t)

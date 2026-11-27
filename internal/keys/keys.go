@@ -90,6 +90,7 @@ var Defaults = []Binding{
 	{Diff, "ask", []string{"p"}, "ask Claude about the line or selection"},
 	{Diff, "chats", []string{"P"}, "Claude conversations on this PR"},
 	{Diff, "comment", []string{"c"}, "comment on the line or selection"},
+	{Diff, "file_comment", []string{"w"}, "comment on the whole file"},
 	{Diff, "reply", []string{"r"}, "reply to the thread under the cursor"},
 	{Diff, "resolve", []string{"x"}, "resolve / unresolve the thread under the cursor"},
 	{Diff, "delete_comment", []string{"d"}, "delete one of your comments in the thread"},
@@ -118,6 +119,7 @@ var Defaults = []Binding{
 	{Files, "collapse", []string{"h", "left"}, "collapse the directory / go to the parent"},
 	{Files, "collapse_all", []string{"H"}, "collapse every directory"},
 	{Files, "expand_all", []string{"L"}, "expand every directory"},
+	{Files, "comment", []string{"c"}, "comment on the selected file as a whole"},
 
 	{Comments, "close", []string{"esc", "i", "q"}, "back to the diff"},
 	{Comments, "down", []string{"j", "down"}, "next thread"},
